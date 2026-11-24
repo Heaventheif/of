@@ -10,5 +10,8 @@ object ReaderRouting {
         else -> null
     }
 
+    /** Legacy .doc: opened by the text-only viewer. */
+    fun isLegacyDoc(name: String): Boolean = name.substringAfterLast('.', "").equals("doc", ignoreCase = true)
+
     fun formatOf(file: File): ReaderFormat? = formatOf(file.name)
 }

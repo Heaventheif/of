@@ -48,7 +48,9 @@
     <string name="rd_err_corrupt_docx">This DOCX is damaged or cannot be converted.</string>
     <string name="rd_err_password">This PDF is password-protected and cannot be opened here.</string>
     <string name="rd_err_empty">The document is empty.</string>
-    <string name="rd_err_legacy_doc">This is an old Word (.doc) file, which the built-in reader does not support.</string>
+    <string name="rd_err_legacy_doc">This is an old Word (.doc) file in an unsupported format (Word 95 or older).</string>
+    <string name="rd_err_doc_encrypted">This DOC file is password protected.</string>
+    <string name="rd_err_corrupt_doc">This DOC file is damaged or cannot be read.</string>
     <string name="rd_err_too_large">The file is too large to open here.</string>
     <string name="rd_err_render">This page could not be rendered.</string>
     <string name="rd_err_web">The document view stopped. Try again.</string>

@@ -8,6 +8,6 @@ fun DocumentReaderScreen(path: String, onBack: () -> Unit) {
     when (ReaderRouting.formatOf(path)) {
         ReaderFormat.PDF -> PdfReaderScreen(path, onBack)
         ReaderFormat.DOCX -> DocxReaderScreen(path, onBack)
-        null -> onBack()
+        null -> if (ReaderRouting.isLegacyDoc(path)) LegacyDocScreen(path, onBack) else onBack()
     }
 }

@@ -218,7 +218,7 @@ fun BrowserScreen(
             }
             item.kind == FileKind.AUDIO -> playFrom(item)
             item.kind == FileKind.TEXT || item.kind == FileKind.CODE -> onEditText(p)
-            org.openfilemanager.app.reader.ReaderRouting.formatOf(item.name) != null -> onOpenReader(p)
+            org.openfilemanager.app.reader.ReaderRouting.let { it.formatOf(item.name) != null || it.isLegacyDoc(item.name) } -> onOpenReader(p)
             else -> openWithSystem(ctx, p)
         }
     }
@@ -413,7 +413,9 @@ fun BrowserScreen(
                                 FileRow(
                                     item, item.id in s.selection, s.selecting,
                                     onClick = { open(item) }, onLongClick = { vm.longSelect(item.id) },
-                                    onMore = { sheetItem = item }
+                                    onMore = { sheetItem = item },
+                                    // Per-row three-dots removed: all actions live in the selection bar / its "more" menu
+                                    showMore = false
                                 )
                                 HorizontalDivider(
                                     Modifier.padding(start = Dim.Gutter * 2 + Dim.Tile), color = MaterialTheme.colorScheme.outlineVariant
@@ -438,17 +440,7 @@ fun BrowserScreen(
                         else { ctx.appContainer.pinned.pin(itemPath); vm.notify(ctx.getString(R.string.drawer_pinned_done)) }
                     })
                 }
-                if (!item.isDir) add(SheetAction(Icons.Outlined.Share, stringResource(R.string.ui_share)) { shareFiles(ctx, listOf(itemPath)) })
-                if (!item.isDir) add(SheetAction(Icons.Outlined.OpenInNew, stringResource(R.string.ui_open_with)) { openWithSystem(ctx, itemPath) })
-                if (!item.isDir) add(SheetAction(Icons.Outlined.InsertDriveFile, stringResource(R.string.ui_open_as)) { openAsItem = item })
                 if (item.kind == FileKind.ARCHIVE) add(SheetAction(Icons.Outlined.Archive, stringResource(R.string.ui_extract_here)) { vm.extractHere(File(itemPath), null) })
-                add(SheetAction(Icons.Outlined.Edit, stringResource(R.string.ui_rename)) { renameItem = item })
-                add(SheetAction(Icons.Outlined.ContentCopy, stringResource(R.string.ui_copy)) { vm.toggleSelect(item.id); vm.copySelection(false) })
-                add(SheetAction(Icons.Outlined.DriveFileMove, stringResource(R.string.ui_move)) { vm.toggleSelect(item.id); vm.copySelection(true) })
-                add(SheetAction(Icons.Outlined.FolderZip, stringResource(R.string.ui_compress)) { vm.toggleSelect(item.id); compressName = vm.defaultArchiveName() })
-                add(SheetAction(Icons.Outlined.Delete, stringResource(R.string.ui_delete), destructive = true, dividerBefore = true) {
-                    vm.toggleSelect(item.id); confirmDelete = true
-                })
             } else if (archiveFile != null) {
                 if (!item.isDir) add(SheetAction(Icons.Outlined.OpenInNew, stringResource(R.string.ui_open)) { open(item) })
                 add(SheetAction(Icons.Outlined.Archive, stringResource(R.string.ui_extract_here)) {
@@ -499,6 +491,17 @@ fun BrowserScreen(
             if (archiveFile == null) add(SheetAction(Icons.Outlined.FolderZip, stringResource(R.string.ui_compress)) { compressName = vm.defaultArchiveName() })
             if (archiveFile != null) add(SheetAction(Icons.Outlined.Archive, stringResource(R.string.ui_extract_selected)) { vm.extractHere(archiveFile, vm.selectedArchiveEntries()) })
             val singlePath = single?.path
+            if (single != null && singlePath != null && !single.isArchiveEntry) {
+                if (single.isDir) {
+                    val isPinned = singlePath in pinnedPaths
+                    add(SheetAction(Icons.Outlined.PushPin, stringResource(if (isPinned) R.string.drawer_unpin else R.string.drawer_pin)) {
+                        if (isPinned) ctx.appContainer.pinned.unpin(singlePath)
+                        else { ctx.appContainer.pinned.pin(singlePath); vm.notify(ctx.getString(R.string.drawer_pinned_done)) }
+                        vm.clearSelection()
+                    })
+                }
+                if (single.kind == FileKind.ARCHIVE) add(SheetAction(Icons.Outlined.Archive, stringResource(R.string.ui_extract_here)) { vm.extractHere(File(singlePath), null); vm.clearSelection() })
+            }
             if (single != null && singlePath != null && !single.isDir && !single.isArchiveEntry) {
                 add(SheetAction(Icons.Outlined.OpenInNew, stringResource(R.string.ui_open_with)) { openWithSystem(ctx, singlePath) })
                 add(SheetAction(Icons.Outlined.InsertDriveFile, stringResource(R.string.ui_open_as)) { openAsItem = single })

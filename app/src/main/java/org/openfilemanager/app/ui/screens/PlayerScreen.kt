@@ -32,6 +32,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.outlined.MusicNote
 import androidx.compose.material.icons.outlined.Repeat
@@ -306,7 +307,7 @@ fun MiniPlayer(onOpen: () -> Unit) {
                 Icon(if (st.playing) Icons.Filled.Pause else Icons.Filled.PlayArrow, stringResource(R.string.ui_play_pause))
             }
             IconButton({ MusicPlaybackService.command(ctx, MusicPlaybackService.ACTION_STOP) }) {
-                Icon(Icons.Outlined.Stop, stringResource(R.string.ui_stop), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                Icon(Icons.Filled.Stop, stringResource(R.string.ui_stop), tint = androidx.compose.ui.graphics.Color(0xFFFF1744))
             }
         }
     }

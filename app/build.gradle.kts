@@ -30,8 +30,8 @@ android {
         applicationId = "org.openfilemanager.app"
         minSdk = 30
         targetSdk = 36
-        versionCode = 21
-        versionName = "0.8.4"
+        versionCode = 23
+        versionName = "0.8.6"
     }
 
     signingConfigs {

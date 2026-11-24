@@ -22,7 +22,7 @@ object DocFingerprint {
                 raf.seek(offset)
                 var read = 0
                 while (read < len) {
-                    val n = raf.read(buf, 0, len - read)
+                    val n = raf.read(buf, 0, minOf(buf.size, len - read)) // never ask for more than the buffer holds
                     if (n < 0) break
                     md.update(buf, 0, n)
                     read += n

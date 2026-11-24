@@ -48,7 +48,9 @@
     <string name="rd_err_corrupt_docx">ملف DOCX تالف أو لا يمكن تحويله.</string>
     <string name="rd_err_password">ملف PDF محمي بكلمة مرور ولا يمكن فتحه هنا.</string>
     <string name="rd_err_empty">المستند فارغ.</string>
-    <string name="rd_err_legacy_doc">هذا ملف Word قديم (.doc) ولا يدعمه القارئ الداخلي.</string>
+    <string name="rd_err_legacy_doc">هذا ملف Word قديم (.doc) بصيغة غير مدعومة (Word 95 أو أقدم).</string>
+    <string name="rd_err_doc_encrypted">ملف DOC هذا محمي بكلمة مرور.</string>
+    <string name="rd_err_corrupt_doc">ملف DOC تالف أو لا يمكن قراءته.</string>
     <string name="rd_err_too_large">الملف كبير جداً لفتحه هنا.</string>
     <string name="rd_err_render">تعذّر عرض هذه الصفحة.</string>
     <string name="rd_err_web">توقف عارض المستند. حاول مجدداً.</string>

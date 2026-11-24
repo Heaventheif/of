@@ -135,7 +135,11 @@ fun ImageEditorScreen(path: String, onBack: () -> Unit, onSaved: () -> Unit = {}
     ) {
     val imeVisible = WindowInsets.isImeVisible
     val panelMax = if (imeVisible) maxHeight * 0.36f else minOf(300.dp, maxHeight * 0.45f)
-    CompositionLocalProvider(LocalPanelMaxHeight provides panelMax) {
+    // Icons/text without explicit tint inherit LocalContentColor (black here) -> invisible on dark bg
+    CompositionLocalProvider(
+        LocalPanelMaxHeight provides panelMax,
+        androidx.compose.material3.LocalContentColor provides MaterialTheme.colorScheme.onBackground
+    ) {
     Column(Modifier.fillMaxSize()) {
         // ---- الشريط العلوي
         Row(

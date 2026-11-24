@@ -16,11 +16,13 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 /** Brand seed (emerald). Used only for the fallback palettes below; with dynamic color the system wallpaper wins. */
-val BrandGreen = Color(0xFF00E476)
+val BrandGreen = Color(0xFF00E676)
 
 /**
  * Appearance preferences (theme mode + Material You). Small synchronous SharedPreferences, like
@@ -38,7 +40,7 @@ object ThemeManager {
 
     var mode: String by mutableStateOf(SYSTEM)
         private set
-    var dynamicColor: Boolean by mutableStateOf(true)
+    var dynamicColor: Boolean by mutableStateOf(false)
         private set
 
     /** Dynamic color needs Android 12 (API 31); the app's minSdk is 30. */
@@ -47,7 +49,7 @@ object ThemeManager {
     fun load(context: Context) {
         val p = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         mode = p.getString(KEY_MODE, SYSTEM)?.takeIf { it == LIGHT || it == DARK } ?: SYSTEM
-        dynamicColor = p.getBoolean(KEY_DYNAMIC, true)
+        dynamicColor = p.getBoolean(KEY_DYNAMIC, false)
     }
 
     fun saveMode(context: Context, value: String) {
@@ -63,7 +65,7 @@ object ThemeManager {
 
 // ---- Fallback Material 3 tonal palettes (used below Android 12 or when dynamic color is off) ----
 private val OfmLightColors = lightColorScheme(
-    primary = Color(0xFF006D3C), onPrimary = Color(0xFFFFFFFF),
+    primary = Color(0xFF00A152), onPrimary = Color(0xFFFFFFFF),
     primaryContainer = Color(0xFF94F7B5), onPrimaryContainer = Color(0xFF00210F),
     secondary = Color(0xFF4E6354), onSecondary = Color(0xFFFFFFFF),
     secondaryContainer = Color(0xFFD0E8D4), onSecondaryContainer = Color(0xFF0B1F13),
@@ -75,15 +77,15 @@ private val OfmLightColors = lightColorScheme(
     surface = Color(0xFFF6FBF3), onSurface = Color(0xFF181D19),
     surfaceVariant = Color(0xFFDCE5DB), onSurfaceVariant = Color(0xFF404942),
     outline = Color(0xFF717972), outlineVariant = Color(0xFFC0C9C0),
-    inverseSurface = Color(0xFF2D322D), inverseOnSurface = Color(0xFFEEF2EA), inversePrimary = Color(0xFF77DB9A),
+    inverseSurface = Color(0xFF2D322D), inverseOnSurface = Color(0xFFEEF2EA), inversePrimary = Color(0xFF00E676),
     surfaceContainerLowest = Color(0xFFFFFFFF), surfaceContainerLow = Color(0xFFF0F5ED),
     surfaceContainer = Color(0xFFEAEFE7), surfaceContainerHigh = Color(0xFFE4EAE2),
     surfaceContainerHighest = Color(0xFFDFE4DC)
 )
 
 private val OfmDarkColors = darkColorScheme(
-    primary = Color(0xFF77DB9A), onPrimary = Color(0xFF00391D),
-    primaryContainer = Color(0xFF00522C), onPrimaryContainer = Color(0xFF94F7B5),
+    primary = Color(0xFF00E676), onPrimary = Color(0xFF00391D),
+    primaryContainer = Color(0xFF0A4A2A), onPrimaryContainer = Color(0xFF00E676),
     secondary = Color(0xFFB4CCB9), onSecondary = Color(0xFF203526),
     secondaryContainer = Color(0xFF374B3C), onSecondaryContainer = Color(0xFFD0E8D4),
     tertiary = Color(0xFFA3CDDB), onTertiary = Color(0xFF053543),
@@ -94,7 +96,7 @@ private val OfmDarkColors = darkColorScheme(
     surface = Color(0xFF0F1511), onSurface = Color(0xFFDFE4DC),
     surfaceVariant = Color(0xFF404942), onSurfaceVariant = Color(0xFFC0C9C0),
     outline = Color(0xFF8A938B), outlineVariant = Color(0xFF404942),
-    inverseSurface = Color(0xFFDFE4DC), inverseOnSurface = Color(0xFF2D322D), inversePrimary = Color(0xFF006D3C),
+    inverseSurface = Color(0xFFDFE4DC), inverseOnSurface = Color(0xFF2D322D), inversePrimary = Color(0xFF00A152),
     surfaceContainerLowest = Color(0xFF0A0F0B), surfaceContainerLow = Color(0xFF171D19),
     surfaceContainer = Color(0xFF1B211D), surfaceContainerHigh = Color(0xFF262B27),
     surfaceContainerHighest = Color(0xFF303632)
@@ -102,7 +104,22 @@ private val OfmDarkColors = darkColorScheme(
 
 /** Standard Material 3 type scale. Only change: nothing is smaller than 12sp (readability). */
 private val OfmType = Typography().let { t ->
-    t.copy(labelSmall = t.labelSmall.copy(fontSize = 12.sp, lineHeight = 16.sp))
+    // Slightly bolder text everywhere: Normal -> Medium, Medium -> SemiBold
+    fun TextStyle.bolder() = copy(
+        fontWeight = when (fontWeight) {
+            null, FontWeight.Normal -> FontWeight.Medium
+            FontWeight.Medium -> FontWeight.SemiBold
+            else -> fontWeight
+        }
+    )
+    t.copy(
+        displayLarge = t.displayLarge.bolder(), displayMedium = t.displayMedium.bolder(), displaySmall = t.displaySmall.bolder(),
+        headlineLarge = t.headlineLarge.bolder(), headlineMedium = t.headlineMedium.bolder(), headlineSmall = t.headlineSmall.bolder(),
+        titleLarge = t.titleLarge.bolder(), titleMedium = t.titleMedium.bolder(), titleSmall = t.titleSmall.bolder(),
+        bodyLarge = t.bodyLarge.bolder(), bodyMedium = t.bodyMedium.bolder(), bodySmall = t.bodySmall.bolder(),
+        labelLarge = t.labelLarge.bolder(), labelMedium = t.labelMedium.bolder(),
+        labelSmall = t.labelSmall.bolder().copy(fontSize = 12.sp, lineHeight = 16.sp)
+    )
 }
 
 /** Standard Material 3 shape scale: 4 / 8 / 12 / 16 / 28 dp. */

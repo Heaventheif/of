@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Gray folder icon drawn in code (VectorDrawable), kept inside the 66dp safe zone -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Back panel -->
+    <path android:pathData="M27,32a3,3 0 0 1 3,-3h12l5,4h28a3,3 0 0 1 3,3v34a3,3 0 0 1 -3,3h-45a3,3 0 0 1 -3,-3z">
+        <aapt:attr name="android:fillColor">
+            <gradient android:startX="27" android:startY="29" android:endX="78" android:endY="72"
+                android:startColor="#5A5A5E" android:endColor="#2E2E31" />
+        </aapt:attr>
+    </path>
+
+    <!-- Back paper -->
+    <path android:fillColor="#B8B8BC" android:pathData="M34,35h42v8h-42z" />
+
+    <!-- Front paper -->
+    <path android:pathData="M32,38h44v30h-44z">
+        <aapt:attr name="android:fillColor">
+            <gradient android:startX="32" android:startY="38" android:endX="76" android:endY="68"
+                android:startColor="#F2F2F4" android:endColor="#CFCFD3" />
+        </aapt:attr>
+    </path>
+
+    <!-- Front panel with notch -->
+    <path android:pathData="M30,49a3,3 0 0 1 3,-3h11l2,3h14l2,-3h11a3,3 0 0 1 3,3v19a3,3 0 0 1 -3,3h-40a3,3 0 0 1 -3,-3z">
+        <aapt:attr name="android:fillColor">
+            <gradient android:startX="30" android:startY="46" android:endX="76" android:endY="71"
+                android:startColor="#A9A9AE" android:endColor="#3A3A3E" />
+        </aapt:attr>
+    </path>
+
+    <!-- Front panel top highlight -->
+    <path android:fillColor="#33FFFFFF" android:pathData="M33,46h11l2,3h14l2,-3h11v1h-11l-2,3h-14l-2,-3h-11z" />
+</vector>
