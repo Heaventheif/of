@@ -45,8 +45,8 @@ jobs:
           fi
           "$APKSIGNER" sign \
             --ks keystore.jks \
-            --ks-pass pass:example1234 \
-            --key-pass pass:example1234 \
+            --ks-pass pass:sunkenmoon \
+            --key-pass pass:sunkenmoon \
             --ks-key-alias mykey \
             --out app/build/outputs/apk/release/app-release-signed.apk \
             "$APK"
