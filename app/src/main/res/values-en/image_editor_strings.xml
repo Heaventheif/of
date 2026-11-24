@@ -1,0 +1,159 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Image editor (ie_) -->
+    <string name="ie_edit_image">Edit Image</string>
+
+    <!-- Tool toolbar -->
+    <string name="ie_tool_text">Text tool</string>
+    <string name="ie_tool_crop">Crop tool</string>
+    <string name="ie_tool_image">Add image tool</string>
+    <string name="ie_tool_draw">Drawing tool</string>
+    <string name="ie_tool_shapes">Shapes tool</string>
+    <string name="ie_tool_rotate">Rotate tool</string>
+    <string name="ie_redo">Redo</string>
+
+    <!-- General -->
+    <string name="ie_load_failed">Could not open this image for editing.</string>
+    <string name="ie_saved_to">Saved “%1$s”</string>
+    <string name="ie_color">Color</string>
+    <string name="ie_opacity">Opacity</string>
+    <string name="ie_delete">Delete</string>
+    <string name="ie_to_front">Bring to front</string>
+    <string name="ie_to_back">Send to back</string>
+    <string name="ie_flip_h">Flip horizontally</string>
+    <string name="ie_flip_v">Flip vertically</string>
+
+    <!-- Saving -->
+    <string name="ie_discard_title">Unsaved changes</string>
+    <string name="ie_discard_body">You have edits that are not saved yet. What do you want to do?</string>
+    <string name="ie_discard">Discard changes</string>
+    <string name="ie_keep_editing">Keep editing</string>
+    <string name="ie_save_as_new">Save as new image</string>
+    <string name="ie_replace_original">Replace original</string>
+    <string name="ie_replace_warning">The original file will be permanently replaced with the edited version. This cannot be undone after saving.</string>
+    <string name="ie_replace_unsupported">This file format does not support direct replacement. Use “Save as new image”.</string>
+    <string name="ie_replace_confirm">Replace</string>
+    <string name="ie_file_name">File name</string>
+    <string name="ie_format_jpeg">JPEG</string>
+    <string name="ie_format_png">PNG</string>
+    <string name="ie_format_webp">WebP</string>
+    <string name="ie_quality">Quality</string>
+    <string name="ie_save_dir_hint">The new file is saved next to the original image with a unique name.</string>
+    <string name="ie_save_failed">Failed to save the image.</string>
+    <string name="ie_replace_failed">Failed to replace the original image.</string>
+    <string name="ie_overlay_failed">Could not load the selected image.</string>
+
+    <!-- Text -->
+    <string name="ie_add_text">Add text</string>
+    <string name="ie_text_intro">Add text over the image and style it as you like — it stays editable until you save.</string>
+    <string name="ie_text_hint">Type your text here</string>
+    <string name="ie_font_size">Font size</string>
+    <string name="ie_font">Font</string>
+    <string name="ie_font_default">Default</string>
+    <string name="ie_font_sans">Sans</string>
+    <string name="ie_font_serif">Serif</string>
+    <string name="ie_font_mono">Monospace</string>
+    <string name="ie_font_cursive">Cursive</string>
+    <string name="ie_bold">Bold</string>
+    <string name="ie_align_start">Align to start</string>
+    <string name="ie_align_center">Center</string>
+    <string name="ie_align_end">Align to end</string>
+    <string name="ie_background">Card</string>
+    <string name="ie_bg_color">Card color</string>
+    <string name="ie_shadow">Shadow</string>
+    <string name="ie_outline">Outline</string>
+
+    <!-- Crop -->
+    <string name="ie_crop_free">Free</string>
+    <string name="ie_crop_1_1">1:1</string>
+    <string name="ie_crop_4_3">4:3</string>
+    <string name="ie_crop_16_9">16:9</string>
+    <string name="ie_crop_3_4">3:4</string>
+    <string name="ie_crop_reset">Reset</string>
+    <string name="ie_crop_apply">Apply</string>
+    <string name="ie_crop_hint">Drag the corners to resize the area or drag inside it to move, then apply.</string>
+
+    <!-- Image overlays -->
+    <string name="ie_add_image">Add image</string>
+    <string name="ie_image_hint">Tap an added image on the canvas to change its size, rotation and opacity.</string>
+
+    <!-- Drawing -->
+    <string name="ie_brush_width">Brush width</string>
+    <string name="ie_eraser_strokes">Stroke eraser</string>
+    <string name="ie_eraser_hint">Swipe over the stroke you want to remove.</string>
+
+    <!-- Shapes -->
+    <string name="ie_shape_line">Line</string>
+    <string name="ie_shape_arrow">Arrow</string>
+    <string name="ie_shape_rect">Rectangle</string>
+    <string name="ie_shape_square">Square</string>
+    <string name="ie_shape_circle">Circle</string>
+    <string name="ie_shape_ellipse">Ellipse</string>
+    <string name="ie_shape_triangle">Triangle</string>
+    <string name="ie_shape_bubble">Speech bubble</string>
+    <string name="ie_shape_fill">Fill</string>
+    <string name="ie_shape_width">Stroke width</string>
+    <string name="ie_bubble_text">Bubble text</string>
+    <string name="ie_shapes_hint">Pick a shape then drag on the canvas to draw it — shapes stay editable.</string>
+
+    <!-- Rotate -->
+    <string name="ie_rotate_cw">90° clockwise</string>
+    <string name="ie_rotate_ccw">90° counterclockwise</string>
+    <string name="ie_rotate_180">180°</string>
+    <string name="ie_free_rotation">Free rotation</string>
+    <string name="ie_reset">Reset</string>
+
+    <!-- Sectioned text panel -->
+    <string name="ie_tab_text">Text</string>
+    <string name="ie_tab_font">Font</string>
+    <string name="ie_tab_style">Style</string>
+    <string name="ie_tab_color">Color</string>
+    <string name="ie_tab_effects">Effects</string>
+    <string name="ie_tab_layer">Layer</string>
+    <string name="ie_font_group_arabic">Arabic fonts</string>
+    <string name="ie_font_group_english">English fonts</string>
+    <string name="ie_font_ar_amiri">Amiri</string>
+    <string name="ie_font_ar_scheherazade">Scheherazade</string>
+    <string name="ie_font_ar_tajawal">Tajawal</string>
+    <string name="ie_font_ar_almarai">Almarai</string>
+    <string name="ie_font_ar_lateef">Lateef</string>
+    <string name="ie_font_ar_naskh">Naskh</string>
+    <string name="ie_font_ar_sans">Sans</string>
+    <string name="ie_font_ar_medium">Medium</string>
+    <string name="ie_font_ar_light">Light</string>
+    <string name="ie_font_ar_condensed">Condensed</string>
+    <string name="ie_font_ar_black">Heavy</string>
+    <string name="ie_italic">Italic</string>
+    <string name="ie_underline">Underline</string>
+    <string name="ie_strike">Strikethrough</string>
+    <string name="ie_text_width">Text box width</string>
+    <string name="ie_line_spacing">Line spacing</string>
+    <string name="ie_letter_spacing">Letter spacing</string>
+    <string name="ie_outline_color">Outline color</string>
+    <string name="ie_outline_width">Outline width</string>
+    <string name="ie_shadow_color">Shadow color</string>
+    <string name="ie_card_opacity">Card opacity</string>
+
+    <!-- More shapes -->
+    <string name="ie_shape_double_arrow">Double arrow</string>
+    <string name="ie_shape_block_arrow">Block arrow</string>
+    <string name="ie_shape_rounded_rect">Rounded rectangle</string>
+    <string name="ie_shape_right_triangle">Right triangle</string>
+    <string name="ie_shape_diamond">Diamond</string>
+    <string name="ie_shape_pentagon">Pentagon</string>
+    <string name="ie_shape_hexagon">Hexagon</string>
+    <string name="ie_shape_star">Star</string>
+    <string name="ie_shape_heart">Heart</string>
+    <string name="ie_shape_plus">Plus</string>
+    <string name="ie_shape_chevron">Chevron</string>
+    <string name="ie_tool_cut">Free cut / remove background</string>
+    <string name="ie_cut_keep">Free cut</string>
+    <string name="ie_cut_erase">Erase area</string>
+    <string name="ie_cut_wand">Remove background</string>
+    <string name="ie_cut_hint_keep">Draw around the part you want to keep; everything outside becomes transparent.</string>
+    <string name="ie_cut_hint_erase">Draw around the area to erase; its inside becomes transparent.</string>
+    <string name="ie_cut_hint_wand">Tap the background to erase connected, similar colors. Raise sensitivity to remove more shades; tap again to clear leftovers.</string>
+    <string name="ie_cut_tolerance">Sensitivity</string>
+    <string name="ie_cut_reset">Restore original</string>
+    <string name="ie_cut_jpeg_note">JPEG has no transparency: cut areas will turn black. Choose PNG or WebP.</string>
+</resources>

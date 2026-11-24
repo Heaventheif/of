@@ -1,0 +1,159 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- محرّر الصور (ie_) -->
+    <string name="ie_edit_image">تعديل الصورة</string>
+
+    <!-- شريط الأدوات -->
+    <string name="ie_tool_text">أداة النص</string>
+    <string name="ie_tool_crop">أداة القصّ</string>
+    <string name="ie_tool_image">أداة إضافة صورة</string>
+    <string name="ie_tool_draw">أداة الرسم</string>
+    <string name="ie_tool_shapes">أداة الأشكال</string>
+    <string name="ie_tool_rotate">أداة التدوير</string>
+    <string name="ie_redo">إعادة</string>
+
+    <!-- عام -->
+    <string name="ie_load_failed">تعذّر فتح الصورة للتعديل.</string>
+    <string name="ie_saved_to">تم حفظ «%1$s»</string>
+    <string name="ie_color">اللون</string>
+    <string name="ie_opacity">الشفافية</string>
+    <string name="ie_delete">حذف</string>
+    <string name="ie_to_front">إلى الأمام</string>
+    <string name="ie_to_back">إلى الخلف</string>
+    <string name="ie_flip_h">قلب أفقي</string>
+    <string name="ie_flip_v">قلب رأسي</string>
+
+    <!-- الحفظ -->
+    <string name="ie_discard_title">تغييرات غير محفوظة</string>
+    <string name="ie_discard_body">لديك تعديلات لم تُحفظ بعد. ماذا تريد أن تفعل؟</string>
+    <string name="ie_discard">تجاهل التغييرات</string>
+    <string name="ie_keep_editing">متابعة التعديل</string>
+    <string name="ie_save_as_new">حفظ كصورة جديدة</string>
+    <string name="ie_replace_original">استبدال الأصل</string>
+    <string name="ie_replace_warning">سيُستبدل الملف الأصلي بالنسخة المحرّرة نهائياً، ولا يمكن التراجع بعد الحفظ.</string>
+    <string name="ie_replace_unsupported">صيغة هذا الملف لا تدعم الاستبدال المباشر. استخدم «حفظ كصورة جديدة».</string>
+    <string name="ie_replace_confirm">استبدال</string>
+    <string name="ie_file_name">اسم الملف</string>
+    <string name="ie_format_jpeg">JPEG</string>
+    <string name="ie_format_png">PNG</string>
+    <string name="ie_format_webp">WebP</string>
+    <string name="ie_quality">الجودة</string>
+    <string name="ie_save_dir_hint">يُحفظ الملف الجديد بجانب الصورة الأصلية وباسم لا يكرر ملفاً قائماً.</string>
+    <string name="ie_save_failed">فشل حفظ الصورة.</string>
+    <string name="ie_replace_failed">فشل استبدال الصورة الأصلية.</string>
+    <string name="ie_overlay_failed">تعذّر تحميل الصورة المختارة.</string>
+
+    <!-- النص -->
+    <string name="ie_add_text">إضافة نص</string>
+    <string name="ie_text_intro">أضف نصاً فوق الصورة ثم عدّله ونسّقه كما تريد — يبقى قابلاً للتعديل حتى الحفظ.</string>
+    <string name="ie_text_hint">اكتب النص هنا</string>
+    <string name="ie_font_size">حجم الخط</string>
+    <string name="ie_font">الخط</string>
+    <string name="ie_font_default">افتراضي</string>
+    <string name="ie_font_sans">سانس</string>
+    <string name="ie_font_serif">سيريف</string>
+    <string name="ie_font_mono">أحادي المسافة</string>
+    <string name="ie_font_cursive">كتابي</string>
+    <string name="ie_bold">عريض</string>
+    <string name="ie_align_start">إلى البداية</string>
+    <string name="ie_align_center">توسيط</string>
+    <string name="ie_align_end">إلى النهاية</string>
+    <string name="ie_background">بطاقة</string>
+    <string name="ie_bg_color">لون البطاقة</string>
+    <string name="ie_shadow">ظل</string>
+    <string name="ie_outline">حدّ</string>
+
+    <!-- القصّ -->
+    <string name="ie_crop_free">حر</string>
+    <string name="ie_crop_1_1">1:1</string>
+    <string name="ie_crop_4_3">4:3</string>
+    <string name="ie_crop_16_9">16:9</string>
+    <string name="ie_crop_3_4">3:4</string>
+    <string name="ie_crop_reset">إعادة ضبط</string>
+    <string name="ie_crop_apply">تطبيق</string>
+    <string name="ie_crop_hint">اسحب الزوايا لتغيير المنطقة أو اسحب داخلها لتحريكها، ثم طبّق.</string>
+
+    <!-- الصور المضافة -->
+    <string name="ie_add_image">إضافة صورة</string>
+    <string name="ie_image_hint">المس صورة مضافة على القماش لتعديل مقاسها ودورانها وشفافيتها.</string>
+
+    <!-- الرسم -->
+    <string name="ie_brush_width">سماكة الفرشاة</string>
+    <string name="ie_eraser_strokes">ممحاة الضربات</string>
+    <string name="ie_eraser_hint">مرّر إصبعك فوق الضربة التي تريد حذفها.</string>
+
+    <!-- الأشكال -->
+    <string name="ie_shape_line">خط</string>
+    <string name="ie_shape_arrow">سهم</string>
+    <string name="ie_shape_rect">مستطيل</string>
+    <string name="ie_shape_square">مربع</string>
+    <string name="ie_shape_circle">دائرة</string>
+    <string name="ie_shape_ellipse">قطع ناقص</string>
+    <string name="ie_shape_triangle">مثلث</string>
+    <string name="ie_shape_bubble">بالون كلام</string>
+    <string name="ie_shape_fill">تعبئة</string>
+    <string name="ie_shape_width">سماكة الخط</string>
+    <string name="ie_bubble_text">نص البالون</string>
+    <string name="ie_shapes_hint">اختر نوع الشكل ثم اسحب على القماش لرسمه — تبقى الأشكال قابلة للتعديل.</string>
+
+    <!-- التدوير -->
+    <string name="ie_rotate_cw">90° مع الساعة</string>
+    <string name="ie_rotate_ccw">90° عكس الساعة</string>
+    <string name="ie_rotate_180">180°</string>
+    <string name="ie_free_rotation">تدوير حر</string>
+    <string name="ie_reset">إعادة الضبط</string>
+
+    <!-- (تصحيح) لوحة النص بأقسام -->
+    <string name="ie_tab_text">النص</string>
+    <string name="ie_tab_font">الخط</string>
+    <string name="ie_tab_style">التنسيق</string>
+    <string name="ie_tab_color">اللون</string>
+    <string name="ie_tab_effects">التأثيرات</string>
+    <string name="ie_tab_layer">الطبقة</string>
+    <string name="ie_font_group_arabic">خطوط عربية</string>
+    <string name="ie_font_group_english">خطوط إنجليزية</string>
+    <string name="ie_font_ar_amiri">أميري</string>
+    <string name="ie_font_ar_scheherazade">شهرزاد</string>
+    <string name="ie_font_ar_tajawal">تجوال</string>
+    <string name="ie_font_ar_almarai">المراعي</string>
+    <string name="ie_font_ar_lateef">لطيف</string>
+    <string name="ie_font_ar_naskh">نسخ</string>
+    <string name="ie_font_ar_sans">سانس</string>
+    <string name="ie_font_ar_medium">متوسط</string>
+    <string name="ie_font_ar_light">خفيف</string>
+    <string name="ie_font_ar_condensed">مضغوط</string>
+    <string name="ie_font_ar_black">ثقيل</string>
+    <string name="ie_italic">مائل</string>
+    <string name="ie_underline">تسطير</string>
+    <string name="ie_strike">يتوسطه خط</string>
+    <string name="ie_text_width">عرض صندوق النص</string>
+    <string name="ie_line_spacing">تباعد الأسطر</string>
+    <string name="ie_letter_spacing">تباعد الحروف</string>
+    <string name="ie_outline_color">لون الحدّ</string>
+    <string name="ie_outline_width">سماكة الحدّ</string>
+    <string name="ie_shadow_color">لون الظل</string>
+    <string name="ie_card_opacity">شفافية البطاقة</string>
+
+    <!-- (تصحيح) أشكال إضافية -->
+    <string name="ie_shape_double_arrow">سهم مزدوج</string>
+    <string name="ie_shape_block_arrow">سهم عريض</string>
+    <string name="ie_shape_rounded_rect">مستطيل مدوّر</string>
+    <string name="ie_shape_right_triangle">مثلث قائم</string>
+    <string name="ie_shape_diamond">معيّن</string>
+    <string name="ie_shape_pentagon">خماسي</string>
+    <string name="ie_shape_hexagon">سداسي</string>
+    <string name="ie_shape_star">نجمة</string>
+    <string name="ie_shape_heart">قلب</string>
+    <string name="ie_shape_plus">علامة زائد</string>
+    <string name="ie_shape_chevron">شيفرون</string>
+    <string name="ie_tool_cut">قص حر / قص الخلفية</string>
+    <string name="ie_cut_keep">قص حر</string>
+    <string name="ie_cut_erase">مسح منطقة</string>
+    <string name="ie_cut_wand">قص الخلفية</string>
+    <string name="ie_cut_hint_keep">ارسم بإصبعك حدود الجزء الذي تريد إبقاءه؛ يصير ما خارجه شفافاً.</string>
+    <string name="ie_cut_hint_erase">ارسم حول المنطقة التي تريد مسحها؛ يصير داخلها شفافاً.</string>
+    <string name="ie_cut_hint_wand">المس الخلفية لمسح الألوان المتصلة المشابهة. ارفع الحساسية لمسح درجات أكثر، وكرّر اللمس لإزالة البقايا.</string>
+    <string name="ie_cut_tolerance">الحساسية</string>
+    <string name="ie_cut_reset">استعادة الصورة الأصلية</string>
+    <string name="ie_cut_jpeg_note">JPEG لا يدعم الشفافية: ستظهر المناطق المقصوصة سوداء. اختر PNG أو WebP.</string>
+</resources>

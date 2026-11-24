@@ -1,0 +1,88 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- No INTERNET permission by design. -->
+
+    <!-- Full file access (special permission, granted from system settings). -->
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
+
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <!-- Type must match the one passed to startForeground in FileOperationService. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <!-- Type must match the one passed to startForeground in MusicPlaybackService. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <!-- WAKE_MODE_LOCAL in MusicPlaybackService. -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Android 13+: posting media/progress notifications needs the user's explicit grant. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Hand APK files to the system installer (the user still confirms). -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
+    <application
+        android:name=".App"
+        android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:enableOnBackInvokedCallback="true"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:theme="@style/OpenFileManagerTheme">
+        <activity
+            android:name=".ui.OfmActivity"
+            android:exported="true"
+            android:launchMode="singleTop"
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <!-- Open files from other apps. Only types this app can really show in its own UI. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="content" />
+                <data android:scheme="file" />
+                <data android:mimeType="text/*" />
+                <data android:mimeType="image/*" />
+                <data android:mimeType="audio/*" />
+                <data android:mimeType="application/zip" />
+                <data android:mimeType="application/x-zip-compressed" />
+                <data android:mimeType="application/x-tar" />
+                <data android:mimeType="application/gzip" />
+                <data android:mimeType="application/x-gzip" />
+                <data android:mimeType="application/x-xz" />
+                <data android:mimeType="application/json" />
+                <data android:mimeType="application/xml" />
+                <!-- (إضافة) قارئ المستندات المضمّن: docx وpdf من التطبيقات الأخرى -->
+                <data android:mimeType="application/vnd.openxmlformats-officedocument.wordprocessingml.document" />
+                <data android:mimeType="application/pdf" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="*/*" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="*/*" />
+            </intent-filter>
+        </activity>
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+        <service
+            android:name=".FileOperationService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+        <service
+            android:name=".MusicPlaybackService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
+    </application>
+</manifest>

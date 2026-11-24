@@ -1,0 +1,60 @@
+name: Build Release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Decode keystore
+        run: base64 -d keystore.b64 > keystore.jks
+
+      - name: Build release APK
+        run: ./gradlew assembleRelease -PofmAllowUnsignedRelease=true --no-daemon
+
+      - name: Sign APK
+        run: |
+          APK=$(find app/build/outputs/apk/release -name '*.apk' | head -n 1)
+          if [ -z "$APK" ]; then
+            echo "No APK found" >&2
+            exit 1
+          fi
+          APKSIGNER=$(find "$ANDROID_SDK_ROOT/build-tools" -name apksigner | sort -V | tail -n 1)
+          if [ -z "$APKSIGNER" ]; then
+            echo "apksigner not found" >&2
+            exit 1
+          fi
+          "$APKSIGNER" sign \
+            --ks keystore.jks \
+            --ks-pass pass:example1234 \
+            --key-pass pass:example1234 \
+            --ks-key-alias mykey \
+            --out app/build/outputs/apk/release/app-release-signed.apk \
+            "$APK"
+          echo "SIGNED_APK=app/build/outputs/apk/release/app-release-signed.apk" >> "$GITHUB_ENV"
+
+      - name: Upload signed APK as GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.0
+          name: v1.0.0
+          files: ${{ env.SIGNED_APK }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

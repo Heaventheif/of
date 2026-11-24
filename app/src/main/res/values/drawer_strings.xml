@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="drawer_menu">القائمة</string>
+    <string name="drawer_pinned">المجلدات المثبتة</string>
+    <string name="drawer_no_pinned">ثبّت مجلداً من قائمة المجلد (الضغط المطوّل) ليظهر هنا.</string>
+    <string name="drawer_pin">تثبيت في القائمة الجانبية</string>
+    <string name="drawer_unpin">إلغاء التثبيت</string>
+    <string name="drawer_pinned_done">تم تثبيت المجلد</string>
+    <string name="drawer_recent">الملفات الأخيرة</string>
+    <string name="recent_clear">مسح السجل</string>
+    <string name="recent_clear_confirm">سيُمسح سجل آخر الملفات المفتوحة فقط، والملفات نفسها لن تُحذف.</string>
+    <string name="recent_empty">لا توجد ملفات مفتوحة مؤخراً</string>
+    <string name="recent_remove">إزالة من السجل</string>
+    <string name="recent_cleared">تم مسح السجل</string>
+</resources>

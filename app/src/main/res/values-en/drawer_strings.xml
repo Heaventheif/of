@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="drawer_menu">Menu</string>
+    <string name="drawer_pinned">Pinned folders</string>
+    <string name="drawer_no_pinned">Pin a folder from its long-press menu and it will show here.</string>
+    <string name="drawer_pin">Pin to side menu</string>
+    <string name="drawer_unpin">Unpin</string>
+    <string name="drawer_pinned_done">Folder pinned</string>
+    <string name="drawer_recent">Recent files</string>
+    <string name="recent_clear">Clear history</string>
+    <string name="recent_clear_confirm">Only the recent-files history is cleared; the files themselves are not deleted.</string>
+    <string name="recent_empty">No recently opened files</string>
+    <string name="recent_remove">Remove from history</string>
+    <string name="recent_cleared">History cleared</string>
+</resources>
