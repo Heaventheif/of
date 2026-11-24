@@ -3,3 +3,6 @@ build/
 local.properties
 *.keystore
 .idea/
+*.jks
+keystore.b64
+release.keystore
