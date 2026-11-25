@@ -124,7 +124,7 @@ class NavViewModel : ViewModel() {
     /** Opens any file with the right in-app screen; unknown types go to another app. */
     fun openFile(ctx: Context, path: String, readOnly: Boolean, returnTo: Route) {
         ctx.appContainer.lastOpened.record(File(path).toPath())
-        if (File(path).name.let { ReaderRouting.formatOf(it) != null || ReaderRouting.isLegacyDoc(it) }) { route = Route.Reader(path, returnTo); return }
+        if (File(path).name.let { ReaderRouting.formatOf(it) != null || ReaderRouting.isLegacyDoc(it) || ReaderRouting.isPresentation(it) }) { route = Route.Reader(path, returnTo); return }
         when (FileKinds.of(File(path).name)) {
             FileKind.IMAGE -> route = Route.Viewer(listOf(path), 0, returnTo)
             FileKind.TEXT, FileKind.CODE -> route = Route.Editor(path, readOnly, returnTo)

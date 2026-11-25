@@ -163,7 +163,9 @@ class FileOperationService : Service() {
         if (usable == null || usable <= 0L) {
             throw org.openfilemanager.core.ArchiveLimitException(getString(R.string.archive_space_unreadable))
         }
-        return org.openfilemanager.core.ExtractLimits(maxTotalBytes = usable)
+        // (مراجعة 0.8.6-#3) سقف مخفَّف اختياري من الإعدادات، كما في ArchiveService.
+        return if (appContainer.settings.archiveRelaxedLimits) org.openfilemanager.core.ExtractLimits.relaxed(usable)
+        else org.openfilemanager.core.ExtractLimits(maxTotalBytes = usable)
     }
 
     override fun onCreate() {

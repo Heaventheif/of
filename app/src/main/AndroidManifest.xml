@@ -16,12 +16,14 @@
     <!-- Hand APK files to the system installer (the user still confirms). -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
+    <!-- (تحسين) إعلان لغات التطبيق: يظهر التطبيق في منتقي لغة التطبيق في إعدادات النظام (Android 13+) -->
     <application
         android:name=".App"
         android:allowBackup="false"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:label="@string/app_name"
         android:supportsRtl="true"
+        android:localeConfig="@xml/locales_config"
         android:enableOnBackInvokedCallback="true"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
@@ -55,6 +57,8 @@
                 <!-- (إضافة) قارئ المستندات المضمّن: docx وpdf من التطبيقات الأخرى -->
                 <data android:mimeType="application/vnd.openxmlformats-officedocument.wordprocessingml.document" />
                 <data android:mimeType="application/pdf" />
+                <!-- قارئ العروض المضمّن: pptx -->
+                <data android:mimeType="application/vnd.openxmlformats-officedocument.presentationml.presentation" />
             </intent-filter>
             <intent-filter>
                 <action android:name="android.intent.action.SEND" />

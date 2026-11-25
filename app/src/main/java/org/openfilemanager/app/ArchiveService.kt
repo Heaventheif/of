@@ -78,7 +78,8 @@ class ArchiveService(private val context: Context) {
     } catch (e: UnsafeEntryException) {
         ExtractOutcome.Failed(context.getString(R.string.archive_unsafe_path))
     } catch (e: ArchiveLimitException) {
-        ExtractOutcome.Failed(context.getString(R.string.archive_limits_exceeded))
+        val detail = e.message?.takeIf { it.isNotBlank() }?.let { " — $it" } ?: ""
+        ExtractOutcome.Failed(context.getString(R.string.archive_limits_exceeded) + detail)
     } catch (e: FileAlreadyExistsException) {
         // «إبقاء الاثنين» (5): الوجهة الموجودة لم تعد فشلاً — مجلد بديل فريد
         // بنمط «الاسم (ن)» يستقبل الاستخراج كما في مديري الملفات.
@@ -142,7 +143,9 @@ class ArchiveService(private val context: Context) {
         if (usable == null || usable <= 0L) {
             throw ArchiveLimitException(context.getString(R.string.archive_space_unreadable))
         }
-        return ExtractLimits(maxTotalBytes = usable)
+        // (مراجعة 0.8.6-#3) سقف مخفَّف اختياري من الإعدادات للملفات المشروعة شديدة الانضغاط.
+        return if (context.appContainer.settings.archiveRelaxedLimits) ExtractLimits.relaxed(usable)
+        else ExtractLimits(maxTotalBytes = usable)
     }
 
     /** اسم بديل فريد للمجلد الذي سيستقبل الاستخراج: «الاسم (n)». */

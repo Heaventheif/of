@@ -31,6 +31,7 @@ import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
 import androidx.compose.material.icons.outlined.Archive
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.KeyboardArrowUp
 import androidx.compose.material.icons.outlined.CreateNewFolder
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.SearchOff
@@ -110,6 +111,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -175,6 +177,16 @@ fun BrowserScreen(
     var showCreate by remember { mutableStateOf(false) }
     var confirmDiscard by remember { mutableStateOf(false) }
 
+    // (تحسين) وضعا التمرير للقائمة والشبكة: كل موقع جديد يبدأ من الأعلى بدل أن يرث
+    // موضع المجلد السابق، وزر العودة للأعلى يظهر بعد تمرير طويل فقط
+    val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+    val gridState = androidx.compose.foundation.lazy.grid.rememberLazyGridState()
+    LaunchedEffect(s.location) { listState.scrollToItem(0); gridState.scrollToItem(0) }
+    val scrolledDown by remember {
+        androidx.compose.runtime.derivedStateOf { if (s.grid) gridState.firstVisibleItemIndex > 24 else listState.firstVisibleItemIndex > 24 }
+    }
+    val uiScope = androidx.compose.runtime.rememberCoroutineScope()
+
     val shown = s.visibleItems
     val loc = s.location
     val archiveFile = (loc as? Location.Archive)?.file
@@ -218,7 +230,7 @@ fun BrowserScreen(
             }
             item.kind == FileKind.AUDIO -> playFrom(item)
             item.kind == FileKind.TEXT || item.kind == FileKind.CODE -> onEditText(p)
-            org.openfilemanager.app.reader.ReaderRouting.let { it.formatOf(item.name) != null || it.isLegacyDoc(item.name) } -> onOpenReader(p)
+            org.openfilemanager.app.reader.ReaderRouting.let { it.formatOf(item.name) != null || it.isLegacyDoc(item.name) || it.isPresentation(item.name) } -> onOpenReader(p)
             else -> openWithSystem(ctx, p)
         }
     }
@@ -289,8 +301,13 @@ fun BrowserScreen(
                     listOf(
                         ActionBarItem(Icons.Outlined.ContentCopy, stringResource(R.string.ui_copy)) { vm.copySelection(false) },
                         ActionBarItem(Icons.Outlined.DriveFileMove, stringResource(R.string.ui_move)) { vm.copySelection(true) },
-                        ActionBarItem(Icons.Outlined.Share, stringResource(R.string.ui_share)) {
-                            shareFiles(ctx, shown.filter { it.id in s.selection && !it.isDir }.mapNotNull { it.path })
+                        // Rename sits in the main bar (Share moved to "More"): one item renames it,
+                        // several open the bulk-rename dialog.
+                        ActionBarItem(Icons.Outlined.Edit, stringResource(R.string.ui_rename)) {
+                            val chosen = shown.filter { it.id in s.selection }
+                            val single = chosen.singleOrNull()
+                            if (single != null) renameItem = single
+                            else if (chosen.size > 1) showBulkRename = true
                         },
                         ActionBarItem(Icons.Outlined.Delete, stringResource(R.string.ui_delete), destructive = true) { confirmDelete = true },
                         ActionBarItem(Icons.Outlined.MoreVert, stringResource(R.string.ui_more)) { showSelectionMore = true }
@@ -386,10 +403,11 @@ fun BrowserScreen(
                     pullRefreshing = false
                 }
             }
+            Box(Modifier.weight(1f).fillMaxWidth()) {
             PullToRefreshBox(
                 isRefreshing = pullRefreshing || (s.loading && s.items.isNotEmpty()),
                 onRefresh = { pullRefreshing = true; vm.reload() },
-                modifier = Modifier.weight(1f).fillMaxWidth()
+                modifier = Modifier.fillMaxSize()
             ) {
                 when {
                     s.loading && s.items.isEmpty() -> CircularProgressIndicator(Modifier.align(Alignment.Center))
@@ -399,14 +417,14 @@ fun BrowserScreen(
                         Modifier.align(Alignment.Center)
                     )
                     s.grid -> LazyVerticalGrid(
-                        GridCells.Adaptive(Dim.GridCell), contentPadding = PaddingValues(start = 8.dp, end = 8.dp, top = 8.dp, bottom = 16.dp),
+                        GridCells.Adaptive(Dim.GridCell), state = gridState, contentPadding = PaddingValues(start = 8.dp, end = 8.dp, top = 8.dp, bottom = 16.dp),
                         modifier = Modifier.fillMaxSize()
                     ) {
                         items(shown, key = { it.id }) { item ->
                             FileGridCell(item, item.id in s.selection, { open(item) }, { vm.longSelect(item.id) }, Modifier.animateItem())
                         }
                     }
-                    else -> LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 16.dp)) {
+                    else -> LazyColumn(state = listState, modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 16.dp)) {
                         items(shown.size, key = { shown[it].id }) { i ->
                             val item = shown[i]
                             Column(Modifier.animateItem()) {
@@ -424,6 +442,21 @@ fun BrowserScreen(
                         }
                     }
                 }
+            }
+            androidx.compose.animation.AnimatedVisibility(
+                visible = scrolledDown && !s.selecting,
+                modifier = Modifier.align(Alignment.BottomEnd).padding(end = Dim.Gutter, bottom = 16.dp)
+            ) {
+                androidx.compose.material3.SmallFloatingActionButton(
+                    onClick = { uiScope.launch { if (s.grid) gridState.animateScrollToItem(0) else listState.animateScrollToItem(0) } },
+                    containerColor = MaterialTheme.colorScheme.secondaryContainer
+                ) {
+                    Icon(
+                        Icons.Outlined.KeyboardArrowUp,
+                        stringResource(R.string.ui_scroll_top)
+                    )
+                }
+            }
             }
         }
     }
@@ -483,12 +516,21 @@ fun BrowserScreen(
         buildList {
             val chosen = shown.filter { it.id in s.selection }
             val single = chosen.singleOrNull()
-            if (single != null && (!single.isArchiveEntry || s.archiveEditable)) {
+            if (archiveFile == null) {
+                // Normal browsing: Rename lives in the bottom bar, so Share takes its place here.
+                val sharePaths = chosen.filter { !it.isDir }.mapNotNull { it.path }
+                if (sharePaths.isNotEmpty()) {
+                    add(SheetAction(Icons.Outlined.Share, stringResource(R.string.ui_share)) { shareFiles(ctx, sharePaths) })
+                }
+            } else if (single != null && (!single.isArchiveEntry || s.archiveEditable)) {
+                // Inside an editable archive the bottom bar has no Rename, so keep it here.
                 add(SheetAction(Icons.Outlined.Edit, stringResource(R.string.ui_rename)) { renameItem = single })
-            } else if (chosen.size > 1 && (archiveFile == null || s.archiveEditable)) {
+            } else if (chosen.size > 1 && s.archiveEditable) {
                 add(SheetAction(Icons.Outlined.DriveFileRenameOutline, stringResource(R.string.ui_bulk_rename)) { showBulkRename = true })
             }
-            if (archiveFile == null) add(SheetAction(Icons.Outlined.FolderZip, stringResource(R.string.ui_compress)) { compressName = vm.defaultArchiveName() })
+            // An archive is already compressed: don't offer to compress a selection made only of archives.
+            val onlyArchives = chosen.isNotEmpty() && chosen.all { !it.isDir && it.kind == FileKind.ARCHIVE }
+            if (archiveFile == null && !onlyArchives) add(SheetAction(Icons.Outlined.FolderZip, stringResource(R.string.ui_compress)) { compressName = vm.defaultArchiveName() })
             if (archiveFile != null) add(SheetAction(Icons.Outlined.Archive, stringResource(R.string.ui_extract_selected)) { vm.extractHere(archiveFile, vm.selectedArchiveEntries()) })
             val singlePath = single?.path
             if (single != null && singlePath != null && !single.isArchiveEntry) {

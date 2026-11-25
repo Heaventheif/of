@@ -93,9 +93,6 @@ object ImageExporter {
             ExportResult(true, target.toString(), null)
         } catch (e: Exception) {
             ExportResult(false, null, null)
-        } catch (e: OutOfMemoryError) {
-            // التصدير بدقة كاملة يحتفظ بثلاث صور كبيرة معاً: يفشل بأدب بدل إسقاط التطبيق
-            ExportResult(false, null, null)
         }
     }
 
@@ -139,9 +136,6 @@ object ImageExporter {
             MediaLibrary(context).scanFiles(listOf(src.toString()))
             ExportResult(true, src.toString(), null)
         } catch (e: Exception) {
-            ExportResult(false, null, null)
-        } catch (e: OutOfMemoryError) {
-            // التصدير بدقة كاملة يحتفظ بثلاث صور كبيرة معاً: يفشل بأدب بدل إسقاط التطبيق
             ExportResult(false, null, null)
         }
     }

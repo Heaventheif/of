@@ -349,6 +349,15 @@ class AppSettings private constructor(context: Context) {
         get() = loaded()[FOLDERS_FIRST] ?: true
         set(value) = putBooleanValue(FOLDERS_FIRST, value)
 
+    /**
+     * (مراجعة 0.8.6-#3) حدود أرشفة مخفَّفة: ملفات مشروعة شديدة الانضغاط (صور
+     * أقراص مفرّغة، سجلات ضخمة) كانت تُرفض عند سقف 200:1. الإيقاف الافتراضي يحفظ
+     * حماية القنابل المضغوطة؛ التمكين يرفع السقف إلى 2000:1 مع هامش أكبر.
+     */
+    var archiveRelaxedLimits: Boolean
+        get() = loaded()[ARCHIVE_RELAXED] ?: false
+        set(value) = putBooleanValue(ARCHIVE_RELAXED, value)
+
     /** سياسة التعارض الافتراضية للنسخ/النقل. ASK = حوار. */
     fun conflictPolicy(): ConflictPolicy {
         val raw = loaded()[CONFLICT_POLICY]
@@ -426,6 +435,7 @@ class AppSettings private constructor(context: Context) {
         private val CONFLICT_POLICY = stringPreferencesKey("conflict_policy")
         private val DEFAULT_REPEAT = stringPreferencesKey("default_repeat")
         private val DEFAULT_SORT = stringPreferencesKey("default_sort")
+        private val ARCHIVE_RELAXED = booleanPreferencesKey("archive_relaxed_limits")
 
         /** اسم ملف SharedPreferences في الإصدارات قبل 0.6.0 (يُرحَّل مرة واحدة). */
         private const val LEGACY_NAME = "open_file_manager"

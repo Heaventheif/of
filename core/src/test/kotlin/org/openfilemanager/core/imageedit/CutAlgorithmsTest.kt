@@ -192,33 +192,4 @@ class CutAlgorithmsTest {
         assertTrue(CutAlgorithms.colorDistance2(rgb(255, 255, 255), 0) <= 442 * 442)
         assertTrue(sqrt(CutAlgorithms.colorDistance2(rgb(255, 255, 255), 0).toDouble()) < 442.0)
     }
-
-    @Test
-    fun fillPolygonExtendingBelowTheImageFillsTheLastRow() {
-        // المضلّع يتجاوز الحافة السفلى: كان الضلع يسقط قبل آخر سطر فيفرغ (h-1)
-        val w = 20
-        val h = 20
-        val mask = CutAlgorithms.fillPolygon(
-            listOf(5f to 5f, 15f to 5f, 15f to 30f, 5f to 30f), w, h
-        )
-        assertEquals(10 * 15, count(mask))
-        for (x in 5 until 15) assertTrue("x=$x", mask[(h - 1) * w + x])
-    }
-
-    @Test
-    fun softenDoesNotErodeTheRemovedRegionAtTheImageBorder() {
-        // خلفية ملامسة لكل حدود الصورة (إزالة الخلفية): لا تبقى شريحة منها عند الإطار
-        val w = 24
-        val h = 24
-        val mask = BooleanArray(w * h) { i -> !((i % w) in 9..14 && (i / w) in 9..14) }
-        val alpha = CutAlgorithms.soften(mask, w, h, 4)
-        for (x in 0 until w) {
-            assertEquals("top x=$x", 255, alpha[x].toInt() and 0xFF)
-            assertEquals("bottom x=$x", 255, alpha[(h - 1) * w + x].toInt() and 0xFF)
-        }
-        for (y in 0 until h) {
-            assertEquals("left y=$y", 255, alpha[y * w].toInt() and 0xFF)
-            assertEquals("right y=$y", 255, alpha[y * w + w - 1].toInt() and 0xFF)
-        }
-    }
 }

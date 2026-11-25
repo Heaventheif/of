@@ -35,6 +35,34 @@ object IncomingFiles {
         return found.values.toList()
     }
 
+    /**
+     * (مراجعة 0.8.6-#1) النشاط مُصدَّر ويقبل VIEW/SEND بـ file://، فأي تطبيق
+     * يستطيع أن يجعلنا ننسخ أي ملف مقروء إلى الكاش. file:// يُقبل الآن فقط من
+     * مخازن المشاركة (/storage/…) ولا يجوز أن يرتاد خاصية التطبيق (كاش/ملفات/
+     * بيانات) — إغلاق «الوكيل المشوش» الذي كان يتيح نسخ مجلة العمليات أو
+     * الإعدادات إلى الكاش. content:// يبقى الطريق الطبيعي للبقية.
+     */
+    fun isSharedStoragePath(path: String): Boolean = path.startsWith("/storage/")
+
+    /** صحّة منطقية خالصة للاختبار: هل [path] داخل أحد الجذور الخاصة (حدود شاملة للنهاية، لا بادئات خادعة)؟ */
+    fun isPrivatePath(path: String, privateRoots: Collection<String>): Boolean {
+        if (path.isBlank()) return true
+        return privateRoots.any { root ->
+            val r = root.trimEnd('/')
+            path == r || path.startsWith("$r/")
+        }
+    }
+
+    /** جذور التطبيق الخاصة لحظة النسخ، مطبَّعة بعد حلّ الروابط الرمزية (/data/data ليست إلا رابطاً لـ /data/user/0). */
+    private fun privateRoots(ctx: Context): List<String> =
+        // externalCacheDir.parentFile = Android/data/<pkg> itself, so its other subfolders are covered too, plus obb.
+        listOf(
+            ctx.dataDir, ctx.filesDir, ctx.cacheDir, ctx.codeCacheDir, ctx.noBackupFilesDir,
+            ctx.externalCacheDir, ctx.externalCacheDir?.parentFile, ctx.getExternalFilesDir(null), ctx.obbDir
+        )
+            .filterNotNull()
+            .map { runCatching { it.canonicalPath }.getOrDefault(it.absolutePath) }
+
     /** يحذف مجلدات incoming_* الأقدم من يوم: كانت تتراكم (حتى 512MB لكل مشاركة) ولا يحذفها أحد. */
     private fun purgeStale(ctx: Context) {
         val cutoff = System.currentTimeMillis() - 24L * 60 * 60 * 1000
@@ -100,7 +128,10 @@ object IncomingFiles {
                 while (target.exists() && n <= 100_000) target = File(dir, "$stem ($n)$ext").also { n++ }
                 val input = when (uri.scheme) {
                     "content" -> ctx.contentResolver.openInputStream(uri)
-                    "file" -> uri.path?.let { java.io.FileInputStream(File(it)) }
+                    "file" -> uri.path?.takeIf { p ->
+                        val canon = runCatching { File(p).canonicalPath }.getOrDefault(p)
+                        isSharedStoragePath(canon) && !isPrivatePath(canon, privateRoots(ctx))
+                    }?.let { java.io.FileInputStream(it) }
                     else -> null
                 } ?: throw IOException("read")
                 input.use { ins ->

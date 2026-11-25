@@ -30,8 +30,15 @@ android {
         applicationId = "org.openfilemanager.app"
         minSdk = 30
         targetSdk = 36
-        versionCode = 22
-        versionName = "0.8.6"
+        versionCode = 24
+        versionName = "0.8.7"
+        // (تحسين) موارد المكتبات بلغات التطبيق فقط: تُحذف ترجمات AndroidX والمواد
+        // في عشرات اللغات غير المستعملة من الحزمة
+    }
+
+    androidResources {
+        // بديل resourceConfigurations المهجور (AGP 8.9+): تصفية اللغات إلى العربية والإنجليزية.
+        localeFilters += listOf("ar", "en")
     }
 
     signingConfigs {
@@ -57,6 +64,17 @@ android {
         }
     }
 
+    packaging {
+        // ملفات ميتة لا يحتاجها التطبيق وقت التشغيل
+        resources.excludes += setOf(
+            "META-INF/{AL2.0,LGPL2.1}",
+            "META-INF/LICENSE*",
+            "META-INF/NOTICE*",
+            "META-INF/*.kotlin_module",
+            "DebugProbesKt.bin",
+            "kotlin-tooling-metadata.json"
+        )
+    }
     buildFeatures {
         buildConfig = true
         compose = true

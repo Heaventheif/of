@@ -9,8 +9,6 @@ import android.graphics.ColorMatrixColorFilter
 import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.Path
-import android.graphics.PorterDuff
-import android.graphics.PorterDuffXfermode
 import android.graphics.RadialGradient
 import android.graphics.RectF
 import android.graphics.Shader
@@ -142,8 +140,6 @@ object ImageRenderer {
         val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             this.shader = shader
             alpha = (255 * 0.75f * s).toInt().coerceIn(0, 255)
-            // SRC_ATOP: يُعتّم البكسلات الموجودة فقط؛ بدونه يسوَدّ ما قُصّ (الشفاف) عند الزوايا في PNG
-            xfermode = PorterDuffXfermode(PorterDuff.Mode.SRC_ATOP)
         }
         canvas.drawRect(0f, 0f, w.toFloat(), h.toFloat(), paint)
     }
@@ -335,7 +331,7 @@ object ImageRenderer {
             BrushStyle.MARKER -> listOf(stroke(0.4f, width * 2.2f))
             BrushStyle.NEON -> listOf(
                 stroke(0.85f, width * 2.6f).apply {
-                    maskFilter = BlurMaskFilter((width * 0.9f).coerceAtLeast(0.1f), BlurMaskFilter.Blur.NORMAL)
+                    maskFilter = BlurMaskFilter(width * 0.9f, BlurMaskFilter.Blur.NORMAL)
                 },
                 stroke(0.35f, width * 2.2f),
                 // القلب الفاتح: اللون الأصلي مرفوع نحو الأبيض

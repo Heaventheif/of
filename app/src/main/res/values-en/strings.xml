@@ -18,6 +18,9 @@
     <string name="archive_missing_parts">Missing parts: %1$s</string>
     <string name="archive_unsafe_path">Archive contains an unsafe path and was rejected entirely</string>
     <string name="archive_limits_exceeded">Archive exceeded protection limits (size, compression ratio, or entry count)</string>
+    <string name="ui_settings_operations">Operations</string>
+    <string name="ui_settings_archive_limits">Relaxed extraction limits</string>
+    <string name="ui_settings_archive_limits_desc">Allow highly compressible files (empty disk images, huge logs) with weaker zip-bomb protection.</string>
     <string name="archive_destination_exists">An item with the destination name exists; rename or move it first</string>
     <string name="archive_no_items_selected">No archive items were selected</string>
     <string name="archive_destination_skipped">Extraction skipped because %1$s already exists</string>

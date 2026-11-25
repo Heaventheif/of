@@ -4,6 +4,15 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.draggable
+import androidx.compose.foundation.gestures.rememberDraggableState
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.material.icons.outlined.KeyboardArrowDown
+import androidx.compose.material.icons.outlined.KeyboardArrowUp
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.widthIn
@@ -127,6 +136,18 @@ fun ImageEditorScreen(path: String, onBack: () -> Unit, onSaved: () -> Unit = {}
     var showSaveDialog by remember { mutableStateOf(false) }
     var showReplaceConfirm by remember { mutableStateOf(false) }
 
+    // Tool panel open/collapsed. Choosing a tool always re-opens it.
+    var panelOpen by rememberSaveable { mutableStateOf(true) }
+    // Re-open only when the tool actually changes: a plain LaunchedEffect(state.tool) also fires on
+    // first composition after rotation/process restore and would undo a collapsed panel.
+    var lastTool by rememberSaveable { mutableStateOf(state.tool.name) }
+    LaunchedEffect(state.tool) {
+        if (state.tool.name != lastTool) {
+            lastTool = state.tool.name
+            panelOpen = true
+        }
+    }
+
     BackHandler { if (state.dirty && !state.saving) showDiscard = true else onBack() }
 
     // منطقة القصّ محلية للشاشة حتى تطبقها بلوحة القصّ والقماش معاً
@@ -218,11 +239,14 @@ fun ImageEditorScreen(path: String, onBack: () -> Unit, onSaved: () -> Unit = {}
             }
         }
 
-        // ---- لوحة خيارات الأداة
+        // ---- لوحة خيارات الأداة (تُطوى بسحب المقبض لأسفل أو بالنقر، فتحرّر مساحة العمل)
         AnimatedVisibility(visible = state.tool != EditorTool.NONE) {
             Column(Modifier.fillMaxWidth()) {
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                EditorToolPanel(vm, state, cropRect, onCropRectChange = { cropRect = it })
+                PanelHandle(open = panelOpen, onOpenChange = { panelOpen = it })
+                AnimatedVisibility(visible = panelOpen) {
+                    EditorToolPanel(vm, state, cropRect, onCropRectChange = { cropRect = it })
+                }
             }
         }
 
@@ -348,6 +372,39 @@ fun ImageEditorScreen(path: String, onBack: () -> Unit, onSaved: () -> Unit = {}
     }
 }
 
+/**
+ * Handle on top of the tool panel: swipe down (or tap) to collapse it out of the work area,
+ * swipe up (or tap) to bring it back.
+ */
+@Composable
+private fun PanelHandle(open: Boolean, onOpenChange: (Boolean) -> Unit) {
+    var dragged by remember { mutableFloatStateOf(0f) }
+    val dragState = rememberDraggableState { dragged += it }
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .height(36.dp)
+            .background(MaterialTheme.colorScheme.surfaceContainer)
+            .draggable(
+                state = dragState,
+                orientation = Orientation.Vertical,
+                onDragStarted = { dragged = 0f },
+                onDragStopped = {
+                    if (dragged > 16f) onOpenChange(false) else if (dragged < -16f) onOpenChange(true)
+                    dragged = 0f
+                }
+            )
+            .clickable { onOpenChange(!open) },
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(
+            if (open) Icons.Outlined.KeyboardArrowDown else Icons.Outlined.KeyboardArrowUp,
+            stringResource(if (open) R.string.ie_panel_collapse else R.string.ie_panel_expand),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
 private val replaceableFormats = setOf("jpg", "jpeg", "png", "webp")
 
 /** أبعاد الصورة الناتجة (بعد القصّ والتدوير) عند نسبة تصغير [scale]. */
@@ -383,7 +440,12 @@ private val TOOLBAR_ITEMS: List<ToolbarItem> = listOf(
     ToolbarItem(EditorTool.IMAGE, Icons.Outlined.AddPhotoAlternate, R.string.ie_tool_image, R.string.ie_short_image)
 )
 
-/** حوار حفظ نسخة جديدة: الاسم والصيغة وجودة الترميز. */
+/**
+ * حوار حفظ نسخة جديدة: الاسم والصيغة وجودة الترميز والحجم.
+ * الرقاقات في FlowRow تلتف إلى سطر جديد بدل أن يضغطها Row في عرض الحوار الضيق
+ * (كانت رقاقة الحجم الأخيرة تُرسم حرفاً تحت حرف). المحتوى قابل للتمرير للشاشات القصيرة.
+ */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 private fun SaveDialog(
     defaultName: String,
@@ -403,14 +465,21 @@ private fun SaveDialog(
         onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.ie_save_as_new)) },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(
+                Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
                 OutlinedTextField(
                     value = name,
                     onValueChange = { name = it },
                     label = { Text(stringResource(R.string.ie_file_name)) },
-                    singleLine = true
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
                 )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
                     ExportFormat.entries.forEach { f ->
                         FilterChip(
                             selected = fmt == f,
@@ -452,7 +521,10 @@ private fun SaveDialog(
                     stringResource(R.string.ie_export_size),
                     style = MaterialTheme.typography.labelMedium
                 )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
                     EXPORT_SCALES.forEachIndexed { i, s ->
                         FilterChip(
                             selected = sizeIdx == i,
@@ -463,7 +535,9 @@ private fun SaveDialog(
                                     else stringResource(
                                         R.string.ie_size_result,
                                         (fullSize.first * s).toInt(), (fullSize.second * s).toInt()
-                                    )
+                                    ),
+                                    maxLines = 1,
+                                    softWrap = false
                                 )
                             }
                         )

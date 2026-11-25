@@ -63,4 +63,13 @@
     <string name="rd_copy_line">نسخ السطر</string>
     <string name="rd_copied">تم النسخ</string>
     <string name="rd_select_text">تحديد ونسخ نص الصفحة</string>
+    <string name="rd_slide_of">شريحة %1$d من %2$d</string>
+    <string name="rd_slide_number">شريحة %1$d</string>
+    <string name="rd_pptx_notes">ملاحظات المحاضر</string>
+    <string name="rd_pptx_hidden">مخفية</string>
+    <string name="rd_pptx_no_text">لا نص في هذه الشريحة (صور أو أشكال فقط).</string>
+    <string name="rd_pptx_note">تُعرض الشرائح نصاً وجداول بترتيبها، بلا تصميمها الأصلي وصورها. اضغط مطوّلاً على شريحة لنسخ نصها.</string>
+    <string name="rd_err_corrupt_pptx">ملف PPTX تالف أو لا يمكن قراءته.</string>
+    <string name="rd_err_encrypted_pptx">هذا العرض محمي بكلمة مرور ولا يمكن فتحه هنا.</string>
+    <string name="rd_err_not_pptx">هذا الملف ليس عرض PPTX صالحاً.</string>
 </resources>

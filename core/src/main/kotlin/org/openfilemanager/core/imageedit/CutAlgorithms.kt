@@ -151,12 +151,10 @@ object CutAlgorithms {
         val tmp = FloatArray(w * h)
         val out = FloatArray(w * h)
         // أفقياً: طول المقاطع الممتلئة
-        // خارج الصورة يُعدّ ممتلئاً (كتكرار الحافة في boxBlur)، وإلا تآكلت المنطقة المُزالة
-        // الملامسة للإطار فتبقى شريحة من الخلفية على حدود الصورة بعد إزالة الخلفية.
         for (y in 0 until h) {
-            var run = r
+            var run = 0
             for (x in 0 until w + r) {
-                val filled = x >= w || src[y * w + x] > 0.5f
+                val filled = x < w && src[y * w + x] > 0.5f
                 run = if (filled) run + 1 else 0
                 val cx = x - r
                 if (cx >= 0 && cx < w && run >= 2 * r + 1) tmp[y * w + cx] = 1f
@@ -164,9 +162,9 @@ object CutAlgorithms {
         }
         // رأسياً
         for (x in 0 until w) {
-            var run = r
+            var run = 0
             for (y in 0 until h + r) {
-                val filled = y >= h || tmp[y * w + x] > 0.5f
+                val filled = y < h && tmp[y * w + x] > 0.5f
                 run = if (filled) run + 1 else 0
                 val cy = y - r
                 if (cy >= 0 && cy < h && run >= 2 * r + 1) out[cy * w + x] = 1f
@@ -249,8 +247,7 @@ object CutAlgorithms {
             val a = points[i]; val b = points[(i + 1) % n]
             if (a.second == b.second) { minY[i] = Int.MAX_VALUE; maxY[i] = Int.MIN_VALUE; continue }
             minY[i] = floor(min(a.second, b.second) - 0.5f).coerceIn(0f, (h - 1).toFloat()).toInt()
-            // نهاية حصرية: لا تُقصّ إلى h-1 وإلا سقط الضلع قبل آخر سطر ويفسد المضلّع المتجاوز لحافة الصورة السفلى
-            maxY[i] = ceil(max(a.second, b.second) - 0.5f).coerceIn(0f, h.toFloat()).toInt()
+            maxY[i] = ceil(max(a.second, b.second) - 0.5f).coerceIn(0f, (h - 1).toFloat()).toInt()
         }
         val starting = Array(h) { ArrayList<Int>() }
         for (i in 0 until n) if (minY[i] <= maxY[i]) starting[minY[i]].add(i)

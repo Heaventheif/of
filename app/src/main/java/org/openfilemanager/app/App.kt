@@ -46,6 +46,18 @@ class App : Application() {
         }
     }
 
+    /**
+     * (تحسين) ضغط الذاكرة: حين يطلب النظام تقليص الاستهلاك (تطبيق آخر في المقدمة،
+     * ذاكرة منخفضة) يُفرَّغ كاش صور Coil في الذاكرة وأقسام المحرّك الأثقل. الكاش على
+     * القرص يبقى فتعود الصور المصغّرة سريعاً دون إعادة فك ضغط كل شيء.
+     */
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        if (level < android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) return
+        runCatching { Coil.imageLoader(this).memoryCache?.trimMemory(level) }
+        org.openfilemanager.app.imageedit.engine.CutEngine.trimMemory()
+    }
+
     /** (F-16) محمّل الصور مرة واحدة لكل عملية بسياق التطبيق لا النشاط. */
     private fun installImageLoader() {
         Coil.setImageLoader(

@@ -220,6 +220,8 @@
     <string name="ie_crop_ratio">نسبة الأبعاد</string>
     <string name="ie_straighten">تقويم الصورة</string>
     <string name="ie_export_size">حجم الصورة عند الحفظ</string>
-    <string name="ie_size_original">القرار الكامل</string>
+    <string name="ie_size_original">الحجم الأصلي</string>
     <string name="ie_size_result">%1$d × %2$d بكسل</string>
+    <string name="ie_panel_collapse">طيّ اللوحة</string>
+    <string name="ie_panel_expand">فتح اللوحة</string>
 </resources>

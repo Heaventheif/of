@@ -73,7 +73,19 @@ data class ExtractLimits(
      * يسدّ ثغرة الحد لكل ملف وحده (هامش [ratioSlackBytes] يتكرر لكل ملف صغير).
      */
     val maxTotalRatio: Long = maxRatio
-)
+) {
+    companion object {
+        /** (مراجعة 0.8.6-#3) حدود مخفَّفة بقرار صريح من المستخدم (الإعدادات) لملفات
+         *  مشروعة شديدة الانضغاط (صور أقراص مفرّغة، سجلات ضخمة) كانت تُرفض عند 200:1.
+         *  ما زالت تسدّ القنابل الشائعة (نسب ملايين إلى واحد). */
+        fun relaxed(maxTotalBytes: Long): ExtractLimits = ExtractLimits(
+            maxTotalBytes = maxTotalBytes,
+            maxRatio = 2000,
+            maxTotalRatio = 2000,
+            ratioSlackBytes = 64L * 1024 * 1024
+        )
+    }
+}
 
 data class ExtractReport(
     val finalPath: Path,
@@ -135,6 +147,32 @@ class ArchiveExtractor(
     private val limits: ExtractLimits = ExtractLimits(),
     private val charset: Charset = Charsets.UTF_8
 ) {
+    /**
+     * (مراجعة 0.8.6-#2) هل نظام الملفات تحت [dir] حساس لحالة الأحرف؟ نشء ملفين
+     * يختلفان في الحالة فقط: النجاح على ext4/f2fs، والفشل بـ FileAlreadyExists
+     * على FAT/exFAT. أي إخفاق آخر يعامل بقصوى العناية: كشف التعارض بالحالة
+     * الصغيرة (الأشد)، فلا يتغير السلوك عن السابق إلا حيث الوجهة تسمح فعلاً.
+     */
+    private fun probeCaseSensitive(dir: Path): Boolean {
+        val base = ".fm-case-probe-" + UUID.randomUUID().toString().take(8)
+        val a = dir.resolve(base)
+        val b = dir.resolve(base.uppercase(java.util.Locale.ROOT))
+        return try {
+            Files.createFile(a)
+            try {
+                Files.createFile(b)
+                true
+            } catch (e: FileAlreadyExistsException) {
+                false
+            }
+        } catch (e: IOException) {
+            false
+        } finally {
+            runCatching { Files.deleteIfExists(a) }
+            runCatching { Files.deleteIfExists(b) }
+        }
+    }
+
     fun extract(
         archive: Path,
         destinationDir: Path,
@@ -165,12 +203,17 @@ class ArchiveExtractor(
         Files.createDirectory(tmp)
         try {
             val root = tmp.toRealPath()
-            val session = Session(root, onProgress, checkCancelled, filter, onEntryWritten)
+            val session = Session(root, probeCaseSensitive(tmp), onProgress, checkCancelled, filter, onEntryWritten)
             Files.newInputStream(archive).use { fileStream ->
                 val counting = CountingInputStream(fileStream)
                 session.counting = counting
                 val raw = BufferedInputStream(counting, 64 * 1024)
                 when (kind) {
+                    // (مراجعة 0.8.6-#4) القراءة عبر الترويسات المحلية (مجرى): تتسامح مع
+                    // أرشيفات تالف دليلها المركزي، لكن أسماءها قد تختلف عمّا يعرضه
+                    // المفتش (دليل مركزي) في أرشيف مُصنَّع. كل اسم يُتحقق من صحته هنا
+                    // مجدداً (SafeResolve) وكل استخراج بالاسم المحدد يفشل بإغلاق آمن
+                    // عند عدم المطابقة (ui_err_open_entry) — فالاختلاف تشكيلي لا أمني.
                     ArchiveFormat.Kind.ZIP -> ZipArchiveInputStream(raw, charset.name(), true, true).use { zip ->
                         session.copyEntries(zip) { zip.nextEntry }
                     }
@@ -239,6 +282,7 @@ class ArchiveExtractor(
     /** حالة جلسة استخراج واحدة. */
     private inner class Session(
         val root: Path,
+        val caseSensitive: Boolean,
         val onProgress: (Int, Long) -> Unit,
         val checkCancelled: () -> Unit,
         val filter: EntryFilter,
@@ -273,7 +317,10 @@ class ArchiveExtractor(
                     Files.createDirectories(target)
                     continue
                 }
-                if (!seen.add(root.relativize(target).toString().lowercase())) {
+                // كشف التعارض بالحالة الصغيرة على الأنظمة غير الحساسة للحالة فقط:
+                // على ext4 فأشباه «README/readme» ملفان مشروعان تُستقبل معاً.
+                val rel = root.relativize(target).toString()
+                if (!seen.add(if (caseSensitive) rel else rel.lowercase())) {
                     throw UnsafeEntryException("duplicate entry: ${entry.name}")
                 }
                 if (!stream.canReadEntryData(entry)) throw IOException("unsupported entry encoding: ${entry.name}")

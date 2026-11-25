@@ -63,4 +63,13 @@
     <string name="rd_copy_line">Copy line</string>
     <string name="rd_copied">Copied</string>
     <string name="rd_select_text">Select &amp; copy page text</string>
+    <string name="rd_slide_of">Slide %1$d of %2$d</string>
+    <string name="rd_slide_number">Slide %1$d</string>
+    <string name="rd_pptx_notes">Speaker notes</string>
+    <string name="rd_pptx_hidden">Hidden</string>
+    <string name="rd_pptx_no_text">No text on this slide (pictures or shapes only).</string>
+    <string name="rd_pptx_note">Slides are shown as text and tables in order, without the original design or pictures. Long-press a slide to copy its text.</string>
+    <string name="rd_err_corrupt_pptx">This PPTX is damaged or cannot be read.</string>
+    <string name="rd_err_encrypted_pptx">This presentation is password-protected and cannot be opened here.</string>
+    <string name="rd_err_not_pptx">This file is not a valid PPTX presentation.</string>
 </resources>

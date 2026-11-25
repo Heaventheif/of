@@ -246,7 +246,8 @@ fun EditorCanvas(
                                 zoom = (zoom * factor).coerceIn(1f, 6f)
                                 val g = geom()
                                 val d = g.screenDeltaToOut(c - (prevCentroid ?: c))
-                                pan = g.clampPan(pan + d)
+                                // pan is the view-centre offset in the image, so the image follows the fingers by subtracting
+                                pan = g.clampPan(pan - d)
                             }
                             prevCentroid = c
                             prevSpread = spread
@@ -364,7 +365,9 @@ fun EditorCanvas(
                                     ).coerceIn(g.fullPreCropRect().width, g.fullPreCropRect().height)
                                 )
                             }
-                            ModePanOrTap -> if (zoom > 1f) pan = g.clampPan(pan + g.screenDeltaToOut(delta))
+                            // Free pan at any zoom (not only when zoomed in), so the image can be slid up/down
+                            // out from under the tool panel; see clampPan for the limits.
+                            ModePanOrTap -> pan = g.clampPan(pan - g.screenDeltaToOut(delta))
                         }
                         change.consume()
                         if (released) break
@@ -393,7 +396,9 @@ fun EditorCanvas(
         // (تحسين) التحكم بالتكبير: كان التكبير بالقرصة بلا طريقة للعودة إلى الملاءمة
         ZoomControls(
             zoom = zoom,
+            panned = pan != Offset.Zero,
             onZoom = { setZoom(it) },
+            onReset = { zoom = 1f; pan = Offset.Zero },
             modifier = Modifier.align(Alignment.TopCenter).padding(top = 8.dp)
         )
     }
@@ -402,7 +407,13 @@ fun EditorCanvas(
 
 /** أزرار تصغير/ملاءمة/تكبير مع نسبة التكبير الحالية؛ تظهر فوق القماش في وسطه العلوي. */
 @Composable
-private fun ZoomControls(zoom: Float, onZoom: (Float) -> Unit, modifier: Modifier = Modifier) {
+private fun ZoomControls(
+    zoom: Float,
+    panned: Boolean,
+    onZoom: (Float) -> Unit,
+    onReset: () -> Unit,
+    modifier: Modifier = Modifier
+) {
     Row(
         modifier.background(Color.Black.copy(alpha = 0.45f), RoundedCornerShape(20.dp))
             .padding(horizontal = 4.dp, vertical = 2.dp),
@@ -413,7 +424,7 @@ private fun ZoomControls(zoom: Float, onZoom: (Float) -> Unit, modifier: Modifie
             Icon(Icons.Outlined.Remove, stringResource(R.string.ie_zoom_out), Modifier.size(18.dp))
         }
         Surface(
-            onClick = { onZoom(1f) },
+            onClick = onReset, // back to fit AND re-centre (the image can now be panned at 100%)
             shape = RoundedCornerShape(12.dp),
             color = Color.Transparent,
             modifier = Modifier.padding(horizontal = 4.dp)
@@ -424,7 +435,7 @@ private fun ZoomControls(zoom: Float, onZoom: (Float) -> Unit, modifier: Modifie
                     style = MaterialTheme.typography.labelMedium,
                     color = Color.White
                 )
-                if (zoom > 1.01f) {
+                if (zoom > 1.01f || panned) {
                     Icon(
                         Icons.Outlined.FitScreen, stringResource(R.string.ie_zoom_fit),
                         tint = Color.White, modifier = Modifier.padding(start = 4.dp).size(16.dp)
@@ -455,6 +466,9 @@ private val checkerBrush: androidx.compose.ui.graphics.ShaderBrush by lazy {
         android.graphics.BitmapShader(bmp, android.graphics.Shader.TileMode.REPEAT, android.graphics.Shader.TileMode.REPEAT)
     )
 }
+
+/** Screen pixels of the image that must stay inside the view when it is panned to an extreme. */
+private const val PAN_KEEP_VISIBLE_PX = 96f
 
 private const val ModePanOrTap = 0
 private const val ModeDraw = 1
@@ -576,9 +590,16 @@ private class Layer0Geom(
         return Pair(corners, rotateHandle)
     }
 
+    /**
+     * The image may travel until only [PAN_KEEP_VISIBLE_PX] of it is left on the opposite edge of the
+     * view, at any zoom: it can be dragged fully up/down/sideways, but never lost off-screen.
+     * (Previously the limit was ~64px at zoom 1, so the image could not be moved out from under the panel.)
+     */
     fun clampPan(p: Offset): Offset {
-        val maxX = outW * (zoom - 1f) / 2f + 64f
-        val maxY = outH * (zoom - 1f) / 2f + 64f
+        val extraX = ((viewSize.width / 2f - PAN_KEEP_VISIBLE_PX) / effScale).coerceAtLeast(0f)
+        val extraY = ((viewSize.height / 2f - PAN_KEEP_VISIBLE_PX) / effScale).coerceAtLeast(0f)
+        val maxX = outW / 2f + extraX
+        val maxY = outH / 2f + extraY
         return Offset(p.x.coerceIn(-maxX, maxX), p.y.coerceIn(-maxY, maxY))
     }
 }

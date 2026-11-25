@@ -145,7 +145,7 @@ object CutEngine {
         strokeCap = Paint.Cap.ROUND
         strokeJoin = Paint.Join.ROUND
         val soft = (100 - hardness.coerceIn(0, 100)) / 100f
-        if (soft > 0f) maskFilter = BlurMaskFilter((widthPx * soft / 2f).coerceAtLeast(0.1f), BlurMaskFilter.Blur.NORMAL)
+        if (soft > 0f) maskFilter = BlurMaskFilter(widthPx * soft / 2f, BlurMaskFilter.Blur.NORMAL)
         xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_OUT)
     }
 
@@ -191,6 +191,11 @@ object CutEngine {
     /** يُسقِط مرجع النسخة المبكسلة المخزنة (تُنادى عند إغلاق جلسة التحرير).
      *  لا recycle صريح: التصدير قد يعمل على خيط آخر ويستعملها؛ يحرّرها جامع النفايات. */
     fun releaseCaches() {
+        pixelCache = null
+    }
+
+    /** ضغط ذاكرة من النظام: تُسقَط النسخة المبكسلة وتُحسب مجدداً عند الحاجة فقط. */
+    fun trimMemory() {
         pixelCache = null
     }
 }

@@ -222,4 +222,6 @@
     <string name="ie_export_size">Export size</string>
     <string name="ie_size_original">Full size</string>
     <string name="ie_size_result">%1$d × %2$d px</string>
+    <string name="ie_panel_collapse">Collapse panel</string>
+    <string name="ie_panel_expand">Expand panel</string>
 </resources>

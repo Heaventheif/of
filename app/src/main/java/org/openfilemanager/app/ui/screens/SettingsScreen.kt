@@ -119,6 +119,12 @@ fun SettingsScreen(browser: BrowserViewModel, onBack: () -> Unit) {
                 ) { ThemeManager.saveDynamic(context, it) }
             }
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            Header(stringResource(R.string.ui_settings_operations))
+            SwitchRow(
+                stringResource(R.string.ui_settings_archive_limits), settings.archiveRelaxedLimits,
+                supporting = stringResource(R.string.ui_settings_archive_limits_desc)
+            ) { settings.archiveRelaxedLimits = it }
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             Header(stringResource(R.string.ui_language))
             Row(
                 Modifier.fillMaxWidth().heightIn(min = 56.dp).clickable { showLanguage = true }.padding(horizontal = Dim.Gutter + 4.dp),

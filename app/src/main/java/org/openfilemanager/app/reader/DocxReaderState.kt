@@ -258,22 +258,14 @@ class DocxReaderState(
 
     internal fun serve(request: WebResourceRequest): WebResourceResponse {
         val u = request.url
-        if (request.method != "GET" || u.scheme != "https" || u.host != HOST) return blocked()
+        val res = route(request.method, u.scheme, u.host, u.path) ?: return blocked()
         return try {
-            when (u.path) {
-                "/reader.html" -> asset("docx/reader.html", "text/html")
-                "/reader.js" -> asset("docx/reader.js", "application/javascript")
-                "/reader.css" -> asset("docx/reader.css", "text/css")
-                "/mammoth.min.js" -> asset("docx/mammoth.min.js", "application/javascript")
-                "/doc.docx" -> response("application/vnd.openxmlformats-officedocument.wordprocessingml.document", FileInputStream(file))
-                else -> blocked()
-            }
+            if (res == Res.DOC) response(res.mime, FileInputStream(file))
+            else response(res.mime, context.assets.open("docx" + res.path))
         } catch (e: IOException) {
             blocked()
         }
     }
-
-    private fun asset(name: String, mime: String) = response(mime, context.assets.open(name))
 
     private fun response(mime: String, data: InputStream): WebResourceResponse {
         val r = WebResourceResponse(mime, "utf-8", data)
@@ -297,7 +289,22 @@ class DocxReaderState(
 
     var pendingLink: ((String?) -> Unit)? = null
 
+    /** الموارد الوحيدة التي يمكن للويب فيو طلبها — قرار السماح كله هنا، خالص من Android ليُختبر. */
+    internal enum class Res(val path: String, val mime: String) {
+        HTML("/reader.html", "text/html"),
+        JS("/reader.js", "application/javascript"),
+        CSS("/reader.css", "text/css"),
+        MAMMOTH("/mammoth.min.js", "application/javascript"),
+        DOC("/doc.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+    }
+
     companion object {
+        /** GET فقط عبر HTTPS على المضيف الوهمي، وأحد المسارات المعروفة لا غير؛ وإلا null (محجوب 403). */
+        internal fun route(method: String, scheme: String?, host: String?, path: String?): Res? {
+            if (method != "GET" || scheme != "https" || host != HOST) return null
+            return Res.entries.firstOrNull { it.path == path }
+        }
+
         const val HOST = "ofm.reader.internal"
         const val MAX_BYTES = 80L * 1024 * 1024
         private const val CSP = "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src data:; connect-src 'self'"

@@ -18,6 +18,9 @@
     <string name="archive_missing_parts">أجزاء ناقصة: %1$s</string>
     <string name="archive_unsafe_path">الأرشيف يحوي مساراً غير آمن فتم رفضه كله</string>
     <string name="archive_limits_exceeded">تجاوز الأرشيف حدود الحماية (حجم أو نسبة ضغط أو عدد عناصر)</string>
+    <string name="ui_settings_operations">العمليات</string>
+    <string name="ui_settings_archive_limits">حدود استخراج مخفَّفة للضغط العالي</string>
+    <string name="ui_settings_archive_limits_desc">اسمح بملفات مشروعة شديدة الانضغاط (صور أقراص مفرّغة، سجلات ضخمة) مع حماية أضعف من القنابل المضغوطة.</string>
     <string name="archive_destination_exists">يوجد عنصر بنفس اسم الوجهة، غيّر اسمه أو انقله أولاً</string>
     <string name="archive_no_items_selected">لم يتم تحديد أي ملف للاستخراج</string>
     <string name="archive_destination_skipped">تم تخطي الاستخراج لأن %1$s موجود بالفعل</string>

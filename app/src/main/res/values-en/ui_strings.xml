@@ -57,6 +57,7 @@
     <string name="ui_share">Share</string>
     <string name="ui_show_hidden">Show hidden files</string>
     <string name="ui_sort_by">Sort by</string>
+    <string name="ui_scroll_top">Scroll to top</string>
     <string name="ui_sort_modified">Modified</string>
     <string name="ui_sort_name">Name</string>
     <string name="ui_sort_size">Size</string>
