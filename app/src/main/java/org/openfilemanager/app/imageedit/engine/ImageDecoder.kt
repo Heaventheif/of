@@ -42,8 +42,8 @@ object ImageDecoder {
         var sample = 1
         while (max(opts.outWidth, opts.outHeight) / (sample * 2) >= maxDim) sample *= 2
         val decodeOpts = BitmapFactory.Options().apply { inSampleSize = sample }
-        val raw = BitmapFactory.decodeFile(path.toString(), decodeOpts) ?: return null
-        val oriented = applyExif(raw, exifOrientation)
+        val raw = try { BitmapFactory.decodeFile(path.toString(), decodeOpts) } catch (e: OutOfMemoryError) { null } ?: return null
+        val oriented = try { applyExif(raw, exifOrientation) } catch (e: OutOfMemoryError) { raw.recycle(); return null }
         return if (oriented !== raw) { raw.recycle(); oriented } else raw
     }
 
@@ -61,8 +61,8 @@ object ImageDecoder {
             inSampleSize = sample
             inPreferredConfig = Bitmap.Config.ARGB_8888 // شفافية PNG عند الدوران الحر
         }
-        val raw = BitmapFactory.decodeFile(path.toString(), decodeOpts) ?: return null
-        val oriented = applyExif(raw, exifOrientation)
+        val raw = try { BitmapFactory.decodeFile(path.toString(), decodeOpts) } catch (e: OutOfMemoryError) { null } ?: return null
+        val oriented = try { applyExif(raw, exifOrientation) } catch (e: OutOfMemoryError) { raw.recycle(); return null }
         if (oriented !== raw) raw.recycle()
         return Pair(oriented, 1f / sample)
     }

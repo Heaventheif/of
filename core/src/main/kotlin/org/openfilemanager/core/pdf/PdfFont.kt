@@ -96,7 +96,7 @@ internal class PdfFontLoader(private val file: PdfFile) {
             val c = file.int(w[i]) ?: break
             val next = file.resolve(w.getOrNull(i + 1))
             if (next is List<*>) {
-                for ((k, x) in next.withIndex()) map[c + k] = file.num(x) ?: dw
+                for ((k, x) in next.withIndex()) { if (map.size >= 70_000) break; map[c + k] = file.num(x) ?: dw }
                 i += 2
             } else {
                 val last = file.int(next) ?: break

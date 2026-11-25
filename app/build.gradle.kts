@@ -30,7 +30,7 @@ android {
         applicationId = "org.openfilemanager.app"
         minSdk = 30
         targetSdk = 36
-        versionCode = 23
+        versionCode = 22
         versionName = "0.8.6"
     }
 
@@ -125,7 +125,7 @@ tasks.register("checkReleaseSigning") {
         }
     }
 }
-tasks.matching { it.name == "assembleRelease" || it.name == "packageRelease" }.configureEach {
+tasks.matching { it.name == "assembleRelease" || it.name == "packageRelease" || it.name == "bundleRelease" }.configureEach {
     dependsOn("checkReleaseSigning")
 }
 

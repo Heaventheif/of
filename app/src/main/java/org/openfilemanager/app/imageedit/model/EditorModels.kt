@@ -17,7 +17,10 @@ fun isEditableImage(path: String): Boolean =
 /** ألوان الطبقات كـ ARGB طويل — لا اعتماد على Compose في النماذج. */
 typealias Argb = Long
 
-enum class EditorTool { NONE, TEXT, CROP, IMAGE, DRAW, SHAPES, ROTATE, CUT }
+enum class EditorTool { NONE, ADJUST, CROP, CUT, ROTATE, TEXT, DRAW, SHAPES, IMAGE }
+
+/** نمط ضربة الفرشاة: قلم حاد، فلوماستر شفاف عريض، أو خط نيون بتوهّج. */
+enum class BrushStyle { PEN, MARKER, NEON }
 
 enum class TextAlignment { START, CENTER, END }
 
@@ -161,7 +164,8 @@ sealed interface EditLayer {
         override val visible: Boolean = true,
         val points: List<Pair<Float, Float>>,
         val color: Argb,
-        val widthPx: Float
+        val widthPx: Float,
+        val style: BrushStyle = BrushStyle.PEN
     ) : EditLayer
 
     /** شكل هندسي أو سهم أو بالون كلام. */
@@ -201,26 +205,110 @@ fun EditLayer.isInteractiveWith(tool: EditorTool): Boolean = when (tool) {
     EditorTool.IMAGE -> this is EditLayer.Image
     EditorTool.SHAPES -> this is EditLayer.Shape
     EditorTool.NONE -> this !is EditLayer.Stroke
-    EditorTool.DRAW, EditorTool.CROP, EditorTool.ROTATE, EditorTool.CUT -> false
+    EditorTool.DRAW, EditorTool.CROP, EditorTool.ROTATE, EditorTool.CUT, EditorTool.ADJUST -> false
 }
 
-/** أوضاع أداة القص الحر وقص الخلفية. */
+/** أوضاع أداة القصّ: القصّ الحر، مسح منطقة، قصّ الخلفية باللمس، الممحاة، الاستعادة، والموزاييك. */
 enum class CutMode {
-    /** رسم حدود حرة: يُبقى ما بداخلها ويصير الخارج شفافاً. */
+    /** رسم حدود حرة (أو شكل): يُبقى ما بداخلها ويصير الخارج شفافاً. */
     KEEP,
-    /** رسم حدود حرة: يُمسح ما بداخلها. */
+    /** رسم حدود (أو شكل): يُمسح ما بداخلها. */
     ERASE,
     /** لمسة: تمسح المنطقة المتصلة المشابهة اللون (قص الخلفية). */
-    WAND
+    WAND,
+    /** فرشاة تمسح بكسلات الصورة الأساس مباشرة. */
+    ERASER,
+    /** فرشاة تعيد بكسلات من الصورة الأصلية فوق مناطق قُصَّت أو مُسحت. */
+    RESTORE,
+    /** فرشاة تخفي التفاصيل ببلورات كبيرة (للخصوصية: وجوه، لوحات...). */
+    MOSAIC
 }
+
+/** نطاق التنعيم/الحساسية المشترك: قيمة مئوية 0..100. */
+const val CUT_TOLERANCE_DEFAULT = 30
+const val CUT_EDGE_DEFAULT = 35
 
 /**
  * عملية قص على الصورة الأساس (بإحداثيات المستند). تُخزَّن كعمليات لا كبكسلات:
  * فيبقى الأصل سليماً، والتراجع/الإعادة خفيفين، وتُعاد العملية بنفس النتيجة
- * على المعاينة وعلى الدقة الكاملة عند التصدير.
+ * على المعاينة وعلى الدقة الكاملة عند التصدير. كل عملية قابلة لإعادة الضبط
+ * (تنعيم/حساسية) بعد تنفيذها عبر [feather] وغيره دون إعادتها من جديد.
  */
 sealed interface CutOp {
-    data class Keep(val points: List<Pair<Float, Float>>) : CutOp
-    data class Erase(val points: List<Pair<Float, Float>>) : CutOp
-    data class Wand(val x: Float, val y: Float, val tolerance: Int) : CutOp
+    /** تنعيم الحافة 0..100 (0 = حادة). */
+    val feather: Int
+
+    data class Keep(val points: List<Pair<Float, Float>>, override val feather: Int = 0) : CutOp
+    data class Erase(val points: List<Pair<Float, Float>>, override val feather: Int = 0) : CutOp
+
+    data class Wand(
+        val x: Float,
+        val y: Float,
+        val tolerance: Int,
+        /** إحكام الحواف 0..100: يمنع النزيف عبر الحواف الناعمة. */
+        val edgeStop: Int = CUT_EDGE_DEFAULT,
+        override val feather: Int = 0
+    ) : CutOp
+
+    /** إزالة الخلفية تلقائياً: يُقدَّر لون الإطار وتُمسح كل ما يتصل به منه. */
+    data class AutoBg(
+        val tolerance: Int,
+        val edgeStop: Int = CUT_EDGE_DEFAULT,
+        override val feather: Int = 0
+    ) : CutOp
+
+    /** فرشاة مسح بكسلات: خط مستدير الأطراف؛ [hardness] 0..100 (100 = حافة حادة). */
+    data class EraseStroke(
+        val points: List<Pair<Float, Float>>,
+        val widthDoc: Float,
+        val hardness: Int = 100
+    ) : CutOp {
+        override val feather: Int get() = 0
+    }
+
+    /** فرشاة استعادة: تعيد بكسلات الصورة الأصلية داخل مسارها. */
+    data class Restore(
+        val points: List<Pair<Float, Float>>,
+        val widthDoc: Float,
+        val hardness: Int = 100
+    ) : CutOp {
+        override val feather: Int get() = 0
+    }
+
+    /** فرشاة موزاييك: تُرسم نسخة مبكسلة من الأصل داخل مسارها. */
+    data class Pixelate(
+        val points: List<Pair<Float, Float>>,
+        val widthDoc: Float,
+        /** حجم البلوكة كنسبة من عرض الصورة. */
+        val cellFrac: Float = 0.03f
+    ) : CutOp {
+        override val feather: Int get() = 0
+    }
+}
+
+/** هل العملية تُضبط بحساسية قصّ الخلفية (عصا/تلقائي)؟ */
+val CutOp.acceptsTolerance: Boolean
+    get() = this is CutOp.Wand || this is CutOp.AutoBg
+
+/** هل لعملية حدودية (يدوية) تنعيم حافة؟ */
+val CutOp.acceptsFeather: Boolean
+    get() = this is CutOp.Keep || this is CutOp.Erase || this is CutOp.Wand || this is CutOp.AutoBg
+
+/** يُعيد العملية نفسها بقيمة تنعيم جديدة. */
+fun CutOp.withFeather(value: Int): CutOp {
+    val v = value.coerceIn(0, 100)
+    return when (this) {
+        is CutOp.Keep -> copy(feather = v)
+        is CutOp.Erase -> copy(feather = v)
+        is CutOp.Wand -> copy(feather = v)
+        is CutOp.AutoBg -> copy(feather = v)
+        else -> this
+    }
+}
+
+/** يُعيد عملية العصا/التلقائي بقيم حساسية وإحكام حواف جديدة. */
+fun CutOp.withTolerance(tolerance: Int, edgeStop: Int): CutOp = when (this) {
+    is CutOp.Wand -> copy(tolerance = tolerance.coerceIn(0, 100), edgeStop = edgeStop.coerceIn(0, 100))
+    is CutOp.AutoBg -> copy(tolerance = tolerance.coerceIn(0, 100), edgeStop = edgeStop.coerceIn(0, 100))
+    else -> this
 }

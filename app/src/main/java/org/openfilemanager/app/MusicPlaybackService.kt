@@ -201,6 +201,9 @@ class MusicPlaybackService : Service() {
                     playlist = uris
                     index = start.coerceIn(0, uris.lastIndex)
                     openCurrent(autoplay = true)
+                } else if (playlist.isEmpty()) {
+                    // Empty start request: do not stay foreground without a player
+                    clearBus(); stopSelf(); return START_NOT_STICKY
                 }
             }
             ACTION_TOGGLE -> if (player?.isPlaying == true) pause() else startPlayback()

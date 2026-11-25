@@ -17,6 +17,7 @@ internal class PdfContentInterpreter(private val doc: PdfTextDocument) {
         private set
 
     private val sb = StringBuilder()
+    private val MAX_GS_STACK = 256
     private var budget = 3_000_000 // operators per page: stops pathological streams
 
     /** (ميزانية) بايتات XObjects النمطية (Do) المفكوكة في هذه الصفحة: حلقة
@@ -96,7 +97,11 @@ internal class PdfContentInterpreter(private val doc: PdfTextDocument) {
             val v = lx.readValue() ?: break
             if (v !is PdfKeyword) { operands.add(v); if (operands.size > 512) operands.clear(); continue }
             when (v.v) {
-                "q" -> stack.add(gs.copy())
+                "q" -> {
+                    // Bound the saved-state stack; stop politely (partial text) like the other budgets.
+                    if (stack.size >= MAX_GS_STACK) break
+                    stack.add(gs.copy())
+                }
                 "Q" -> if (stack.isNotEmpty()) gs = stack.removeAt(stack.size - 1)
                 "cm" -> nums(operands, 6)?.let { gs.ctm = mul(it, gs.ctm) }
                 "BT" -> { tm = doubleArrayOf(1.0, 0.0, 0.0, 1.0, 0.0, 0.0); tlm = tm }

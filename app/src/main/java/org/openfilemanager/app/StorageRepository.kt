@@ -88,17 +88,11 @@ class StorageRepository(private val context: Context) {
      */
     fun blockedReason(path: Path): String? {
         val absolute = path.toAbsolutePath().normalize().toString()
-        val marker = "/Android/"
-        val index = absolute.lastIndexOf(marker)
-        if (index < 0) return null
-        val rest = absolute.substring(index + marker.length)
-        return when {
-            rest == "data" || rest.startsWith("data/") ||
-                rest == "obb" || rest.startsWith("obb/") ->
-                context.getString(R.string.storage_blocked_reason)
-            else -> null
-        }
+        // Only the system-controlled Android/{data,obb} directly under a volume root
+        return if (SYSTEM_BLOCKED.containsMatchIn(absolute)) context.getString(R.string.storage_blocked_reason) else null
     }
+
+    private val SYSTEM_BLOCKED = Regex("^(/storage/[^/]+|/storage/self/primary|/sdcard|/mnt/sdcard|/data/media/\\d+)/Android/(data|obb)(/|$)")
 
     /**
      * قراءة المجلد بنداء خصائص واحد لكل عنصر (لا listFiles ثم length لكل ملف).
@@ -112,7 +106,8 @@ class StorageRepository(private val context: Context) {
      */
     fun list(location: BrowserLocation): List<FileEntry>? {
         val dir = location.path.toAbsolutePath().normalize()
-        if (!Files.isDirectory(dir, LinkOption.NOFOLLOW_LINKS)) return emptyList()
+        // Missing or not a directory is a failure, not an empty folder (F-11)
+        if (!Files.isDirectory(dir, LinkOption.NOFOLLOW_LINKS)) return null
         val entries = ArrayList<FileEntry>(256)
         try {
             Files.newDirectoryStream(dir).use { stream ->

@@ -5,8 +5,23 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.FitScreen
+import androidx.compose.material.icons.outlined.Remove
+import androidx.compose.material3.FilledTonalIconButton
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -19,20 +34,31 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathFillType
+import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.IntSize
+import org.openfilemanager.app.R
 import org.openfilemanager.app.imageedit.EditorCanvasController
 import org.openfilemanager.app.imageedit.ImageEditorViewModel.EditorUiState
+import org.openfilemanager.app.imageedit.ImageEditorViewModel.LiveCut
+import org.openfilemanager.app.imageedit.model.CutMode
+import org.openfilemanager.core.imageedit.CutShape
 import org.openfilemanager.app.imageedit.engine.ImageRenderer
 import org.openfilemanager.app.imageedit.model.EditLayer
 import org.openfilemanager.app.imageedit.model.EditorTool
 import org.openfilemanager.app.imageedit.model.isInteractiveWith
 import org.openfilemanager.core.imageedit.Affine2
 import org.openfilemanager.core.imageedit.CropMath
+import org.openfilemanager.core.imageedit.CutShapes
 import org.openfilemanager.core.imageedit.FloatRect
 import kotlin.math.atan2
 import kotlin.math.hypot
@@ -46,6 +72,9 @@ import kotlin.math.roundToInt
  *
  * الإيماءات: قرصة = تكبير/تحريك؛ إصبع واحد = حسب الأداة (رسم/سحب/قصّ/تحديد)،
  * أو تحريك اللوحة عند التكبير، ولمسة قصيرة = تحديد.
+ *
+ * في أداة القصّ يُرسم فوق الصورة تراكب حيّ: تعتيم المنطقة التي ستُزال أثناء رسم
+ * الحدّ، ومؤشّر فرشاة بمقدار سماكتها الحقيقية للممحاة/الاستعادة/الموزاييك.
  */
 @Composable
 fun EditorCanvas(
@@ -53,7 +82,8 @@ fun EditorCanvas(
     preview: Bitmap?,
     controller: EditorCanvasController,
     cropRect: FloatRect?,
-    onCropRectChange: (FloatRect?) -> Unit
+    onCropRectChange: (FloatRect?) -> Unit,
+    liveCut: LiveCut? = null
 ) {
     var zoom by remember { mutableFloatStateOf(1f) }
     var pan by remember { mutableStateOf(Offset.Zero) } // بوحدات بكسل المعاينة
@@ -76,6 +106,14 @@ fun EditorCanvas(
 
     val drawPreview = preview
 
+    fun setZoom(target: Float) {
+        val z = target.coerceIn(1f, 6f)
+        if (z == zoom) return
+        zoom = z
+        // مركز الشاشة يبقى ثابتاً؛ الإزاحة تُقيد داخل حدود اللوحة الجديدة
+        pan = geom().clampPan(pan)
+    }
+
     Box(
         Modifier
             .fillMaxSize()
@@ -93,7 +131,14 @@ fun EditorCanvas(
 
                     when (s.tool) {
                         EditorTool.DRAW -> mode = if (s.drawEraser) ModeErase else ModeDraw
-                        EditorTool.CUT -> mode = if (s.cutMode == org.openfilemanager.app.imageedit.model.CutMode.WAND) ModePanOrTap else ModeLasso
+                        EditorTool.CUT -> mode = when (s.cutMode) {
+                            // العصا: لمسة تمسح، والسحب يحرّك اللوحة عند التكبير
+                            CutMode.WAND -> ModePanOrTap
+                            CutMode.KEEP, CutMode.ERASE ->
+                                if (s.cutShape == CutShape.FREE) ModeLasso else ModeCutShape
+                            // الممحاة/الاستعادة/الموزاييك: ضربات فرشاة
+                            else -> ModeCutBrush
+                        }
                         EditorTool.CROP -> {
                             val rect = liveCrop ?: g0.fullPreCropRect()
                             val corners = g0.cropCornersScreen(rect)
@@ -148,6 +193,7 @@ fun EditorCanvas(
                     var eraseStarted = false
                     var shapeStarted = false
                     var lassoStarted = false
+                    var brushStarted = false
                     var cropStarted = false
 
                     fun beginOnce() {
@@ -162,7 +208,9 @@ fun EditorCanvas(
                     fun finishActiveMode() {
                         when (mode) {
                             ModeDraw -> if (strokeStarted) controller.onStrokeFinish()
-                            ModeLasso -> if (lassoStarted) controller.onLassoFinish()
+                            ModeLasso -> if (lassoStarted) controller.onCutPathFinish()
+                            ModeCutShape -> if (shapeStarted) controller.onCutPathFinish()
+                            ModeCutBrush -> if (brushStarted) controller.onCutBrushFinish()
                             // لمسة بلا سحب في أداة الأشكال: لا تُثبَّت شكلاً منعدماً (cancelLive من الدفعة الثانية)
                             ModeShapeDraw -> if (shapeStarted) {
                                 if (moved) controller.onShapeDragFinish() else controller.cancelLive()
@@ -175,6 +223,7 @@ fun EditorCanvas(
                         }
                         strokeStarted = false
                         lassoStarted = false
+                        brushStarted = false
                         shapeStarted = false
                         gestureStarted = false
                         cropStarted = false
@@ -204,9 +253,13 @@ fun EditorCanvas(
                             event.changes.forEach { it.consume() }
                             continue
                         }
-                        if (pressed.isEmpty()) break
-                        val change = event.changes.firstOrNull { it.id == down.id } ?: event.changes.first()
-                        if (!change.pressed) break
+                        val change = event.changes.firstOrNull { it.id == down.id } ?: event.changes.firstOrNull()
+                            ?: break
+                        val released = !change.pressed
+                        // (تحسين) رفع آخر إصبع يُعالَج كآخر نقطة لا يُهمل: لمسة بلا سحب في وضع
+                        // الرسم/الفرشاة ترسم نقطة، وتُغلق الأوضاع المستمرة على موضع الرفع.
+                        // وضع القرصة وحده ينتهي فور رفع آخر إصبع (لا نقطة له عند الرفع).
+                        if (released && pressed.isEmpty() && mode == ModePinch) break
 
                         val pos = change.position
                         val delta = pos - lastPos
@@ -214,8 +267,12 @@ fun EditorCanvas(
                         lastPos = pos
 
                         val continuous = mode == ModeDraw || mode == ModeErase || mode == ModeLasso ||
-                            mode == ModeShapeDraw || mode == ModeCropNew || mode == ModePinch
-                        if (!moved && !continuous) { change.consume(); continue }
+                            mode == ModeShapeDraw || mode == ModeCropNew || mode == ModePinch ||
+                            mode == ModeCutShape || mode == ModeCutBrush
+                        if (!moved && !continuous) {
+                            change.consume()
+                            if (released) break else continue
+                        }
 
                         val g = geom()
                         when (mode) {
@@ -230,7 +287,23 @@ fun EditorCanvas(
                                 val start = !lassoStarted
                                 lassoStarted = true
                                 val doc = g.screenToDoc(pos)
-                                controller.onLassoPoint(doc.x, doc.y, start)
+                                controller.onCutPathPoint(doc.x, doc.y, start)
+                            }
+                            ModeCutShape -> {
+                                val start = !shapeStarted
+                                shapeStarted = true
+                                if (start) gestureStarted = true
+                                // الشكل من نقطة البدء إلى موضع الإصبع (الإحداثيات تمرّ بمصفوفة
+                                // العرض فتدور وتنقلب مع الصورة)
+                                val a = g.screenToDoc(down.position)
+                                val b = g.screenToDoc(pos)
+                                controller.onCutShapePoints(CutShapes.polygon(s.cutShape, a.x, a.y, b.x, b.y))
+                            }
+                            ModeCutBrush -> {
+                                val start = !brushStarted
+                                brushStarted = true
+                                val doc = g.screenToDoc(pos)
+                                controller.onCutBrushPoint(doc.x, doc.y, start)
                             }
                             ModeErase -> {
                                 val start = !eraseStarted
@@ -294,6 +367,7 @@ fun EditorCanvas(
                             ModePanOrTap -> if (zoom > 1f) pan = g.clampPan(pan + g.screenDeltaToOut(delta))
                         }
                         change.consume()
+                        if (released) break
                     }
 
                     // ---- نهاية الإيماءة (تصحيح F15-استعادة: نفس مسار الإغلاق الموحد)
@@ -314,7 +388,52 @@ fun EditorCanvas(
             }
     ) {
         Canvas(Modifier.fillMaxSize()) {
-            drawEditorFrame(drawPreview, liveState, cropRect, ::geom)
+            drawEditorFrame(drawPreview, liveState, cropRect, liveCut, ::geom)
+        }
+        // (تحسين) التحكم بالتكبير: كان التكبير بالقرصة بلا طريقة للعودة إلى الملاءمة
+        ZoomControls(
+            zoom = zoom,
+            onZoom = { setZoom(it) },
+            modifier = Modifier.align(Alignment.TopCenter).padding(top = 8.dp)
+        )
+    }
+
+}
+
+/** أزرار تصغير/ملاءمة/تكبير مع نسبة التكبير الحالية؛ تظهر فوق القماش في وسطه العلوي. */
+@Composable
+private fun ZoomControls(zoom: Float, onZoom: (Float) -> Unit, modifier: Modifier = Modifier) {
+    Row(
+        modifier.background(Color.Black.copy(alpha = 0.45f), RoundedCornerShape(20.dp))
+            .padding(horizontal = 4.dp, vertical = 2.dp),
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        FilledTonalIconButton(onClick = { onZoom(zoom / 1.5f) }, enabled = zoom > 1.01f, modifier = Modifier.size(32.dp)) {
+            Icon(Icons.Outlined.Remove, stringResource(R.string.ie_zoom_out), Modifier.size(18.dp))
+        }
+        Surface(
+            onClick = { onZoom(1f) },
+            shape = RoundedCornerShape(12.dp),
+            color = Color.Transparent,
+            modifier = Modifier.padding(horizontal = 4.dp)
+        ) {
+            Row(Modifier.padding(horizontal = 6.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "${(zoom * 100f).roundToInt()}%",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = Color.White
+                )
+                if (zoom > 1.01f) {
+                    Icon(
+                        Icons.Outlined.FitScreen, stringResource(R.string.ie_zoom_fit),
+                        tint = Color.White, modifier = Modifier.padding(start = 4.dp).size(16.dp)
+                    )
+                }
+            }
+        }
+        FilledTonalIconButton(onClick = { onZoom(zoom * 1.5f) }, enabled = zoom < 5.99f, modifier = Modifier.size(32.dp)) {
+            Icon(Icons.Outlined.Add, stringResource(R.string.ie_zoom_in), Modifier.size(18.dp))
         }
     }
 }
@@ -349,6 +468,8 @@ private const val ModeCropMove = 8
 private const val ModeCropNew = 9
 private const val ModePinch = 11
 private const val ModeLasso = 12
+private const val ModeCutShape = 13
+private const val ModeCutBrush = 14
 
 // ---------------------------------------------------------------------
 // هندسة العرض: صنف خالص يبنى عند الحاجة من الحالة الحية
@@ -493,6 +614,7 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawEditorFrame(
     preview: Bitmap?,
     state: EditorUiState,
     cropRect: FloatRect?,
+    liveCut: LiveCut?,
     geom: () -> Layer0Geom
 ) {
     val bmp = preview ?: return
@@ -512,8 +634,11 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawEditorFrame(
         )
     )
 
+    // تراكب القصّ الحي: ما سيُزال معتَم، وخط الحدّ، ومؤشّر الفرشاة
+    if (liveCut != null) drawLiveCutOverlay(g, liveCut)
+
     // إطار التحديد ومقابضه
-    if (state.tool != EditorTool.CROP && state.tool != EditorTool.DRAW) {
+    if (state.tool != EditorTool.CROP && state.tool != EditorTool.DRAW && state.tool != EditorTool.CUT) {
         val sel = state.selected?.takeIf { it.isInteractiveWith(state.tool) }
         if (sel != null && sel !is EditLayer.Stroke) {
             val (corners, rotHandle) = g.layerHandles(sel)
@@ -567,6 +692,89 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawEditorFrame(
         for (p in c) {
             drawCircle(Color.White, radius = 14f, center = p)
             drawCircle(Color.Black, radius = 11f, center = p)
+        }
+    }
+}
+
+// ---------------------------------------------------------------------
+// تراكب القصّ الحي
+
+private val CutKeepColor = Color(0xFF00E5FF)
+private val CutEraseColor = Color(0xFFFF5252)
+private val CutRestoreColor = Color(0xFF00E676)
+private val CutMosaicColor = Color(0xFFFFB300)
+
+/**
+ * يعرض على القماش ما سيحدث قبل تثبيته: في «قص حر» يُعتَم خارج الحدّ المرسوم، وفي
+ * «مسح منطقة» يُظلَّل داخلَه، وفرش القصّ تُظهر خطّها ومقدار سماكتها الفعلي.
+ * الرسم مقصوص على مستطيل الصورة كي لا يتجاوز التعتيم إلى خلفية القماش.
+ */
+private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawLiveCutOverlay(
+    g: Layer0Geom,
+    live: LiveCut
+) {
+    val left = g.originX
+    val top = g.originY
+    val right = g.originX + g.outW * g.effScale
+    val bottom = g.originY + g.outH * g.effScale
+    if (live.points.isEmpty()) return
+    clipRect(left, top, right, bottom) {
+        when (live.mode) {
+            CutMode.ERASER, CutMode.RESTORE, CutMode.MOSAIC -> {
+                val color = when (live.mode) {
+                    CutMode.ERASER -> CutEraseColor
+                    CutMode.RESTORE -> CutRestoreColor
+                    else -> CutMosaicColor
+                }
+                val screen = live.points.map { g.docToScreen(it.first, it.second) }
+                val radius = live.brushScreenPx / 2f
+                if (screen.size >= 2) {
+                    val path = Path().apply {
+                        moveTo(screen[0].x, screen[0].y)
+                        for (i in 1 until screen.size) lineTo(screen[i].x, screen[i].y)
+                    }
+                    drawPath(path, color.copy(alpha = 0.35f), style = Stroke(radius))
+                }
+                // مؤشّر الفرشاة عند آخر موضع: دائرة بمقدار السماكة الحقيقية
+                val head = screen.last()
+                drawCircle(color.copy(alpha = 0.18f), radius = radius, center = head)
+                drawCircle(color, radius = radius, center = head, style = Stroke(1.5f))
+                drawCircle(color, radius = 3f, center = head)
+            }
+            CutMode.KEEP, CutMode.ERASE -> {
+                if (live.points.size < 2) return@clipRect
+                val screen = live.points.map { g.docToScreen(it.first, it.second) }
+                val path = Path().apply {
+                    moveTo(screen[0].x, screen[0].y)
+                    for (i in 1 until screen.size) lineTo(screen[i].x, screen[i].y)
+                    if (screen.size >= 3) close()
+                }
+                val accent = if (live.mode == CutMode.KEEP) CutKeepColor else CutEraseColor
+                if (live.mode == CutMode.KEEP) {
+                    if (screen.size >= 3) {
+                        // الخارج هو ما سيُزال: تعتيم على كامل الصورة عدا داخل الحدّ
+                        val outside = Path().apply {
+                            addRect(Rect(Offset.Zero, size))
+                            addPath(path)
+                            fillType = PathFillType.EvenOdd
+                        }
+                        drawPath(outside, Color.Black.copy(alpha = 0.62f))
+                    }
+                } else {
+                    drawPath(path, CutEraseColor.copy(alpha = 0.45f))
+                }
+                // خط الحدّ: هالة داكنة تحته ليظهر فوق الألوان الفاتحة والداكنة
+                drawPath(path, Color.Black.copy(alpha = 0.55f), style = Stroke(5f))
+                drawPath(path, accent, style = Stroke(2.5f))
+                // نقطة البداية: حلقة يُغلق عليها الحدّ
+                drawCircle(Color.Black.copy(alpha = 0.55f), radius = 9f, center = screen[0])
+                drawCircle(accent, radius = 6.5f, center = screen[0])
+                drawCircle(Color.White, radius = 2.5f, center = screen[0])
+                // رأس الإصبع
+                val head = screen.last()
+                drawCircle(Color.White, radius = 5f, center = head)
+            }
+            CutMode.WAND -> Unit
         }
     }
 }

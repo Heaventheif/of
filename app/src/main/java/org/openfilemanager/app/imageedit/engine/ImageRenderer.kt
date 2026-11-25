@@ -1,20 +1,29 @@
 package org.openfilemanager.app.imageedit.engine
 
 import android.graphics.Bitmap
+import android.graphics.BlurMaskFilter
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.ColorMatrix
+import android.graphics.ColorMatrixColorFilter
 import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.Path
+import android.graphics.PorterDuff
+import android.graphics.PorterDuffXfermode
+import android.graphics.RadialGradient
 import android.graphics.RectF
+import android.graphics.Shader
 import android.graphics.Typeface
 import android.text.Layout
 import android.text.StaticLayout
 import android.text.TextPaint
+import org.openfilemanager.app.imageedit.model.BrushStyle
 import org.openfilemanager.app.imageedit.model.EditLayer
 import org.openfilemanager.app.imageedit.model.ShapeKind
 import org.openfilemanager.app.imageedit.model.EditorFontFamily
 import org.openfilemanager.app.imageedit.model.TextAlignment
+import org.openfilemanager.core.imageedit.Adjust
 import org.openfilemanager.core.imageedit.Affine2
 import org.openfilemanager.core.imageedit.FloatRect
 import org.openfilemanager.core.imageedit.ImageTransform
@@ -65,13 +74,16 @@ object ImageRenderer {
      * رسم الحالة كاملة على بت ماب جديدة.
      * @param base بت ماب الصورة الأصلية المعترضة (معاينة أو قرار كامل).
      * @param docScale بكسل المخرَج لكل وحدة مستند (preview: < 1، تصدير: 1).
+     * @param adjust تعديلات الصورة الأساس (الإضاءة/الألوان/الفلاتر) — تُطبَّق كمصفوفة ألوان
+     *  عند الرسم فلا تُعدَّل البكسلات؛ التظليل الحوافي تدرّج يُرسم فوق الصورة قبل الطبقات.
      */
     fun render(
         base: Bitmap,
         transform: ImageTransform,
         layers: List<EditLayer>,
         docScale: Float,
-        opaqueBackground: Boolean
+        opaqueBackground: Boolean,
+        adjust: Adjust = Adjust()
     ): Bitmap {
         val docW = base.width / docScale
         val docH = base.height / docScale
@@ -87,7 +99,12 @@ object ImageRenderer {
             uprightMatrix(transform, docW, docH, docScale) else full
 
         // 1) الصورة الأساس عبر التحويل الكامل (قلب الصورة يشمل البكسلات نفسها)
-        canvas.drawBitmap(base, toAndroidMatrix(full), Paint(Paint.FILTER_BITMAP_FLAG))
+        val basePaint = Paint(Paint.FILTER_BITMAP_FLAG)
+        if (!adjust.isIdentity) {
+            basePaint.colorFilter = ColorMatrixColorFilter(ColorMatrix(adjust.colorMatrix()))
+        }
+        canvas.drawBitmap(base, toAndroidMatrix(full), basePaint)
+        if (adjust.vignette > 0) drawVignette(canvas, outW, outH, adjust.vignette)
 
         // 2) الطبقات فوقها
         for (layer in layers) {
@@ -104,6 +121,31 @@ object ImageRenderer {
 
     private fun paintFor(alpha: Float): Paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         this.alpha = (alpha * 255).toInt().coerceIn(0, 255)
+    }
+
+    /**
+     * تظليل حوافي: تدرّج شعاعي شفاف في المركز يسودّ نحو الزوايا. يُرسم فوق الصورة
+     * قبل الطبقات كي لا يُعتم النص والملصقات. [strength] 0..100.
+     */
+    private fun drawVignette(canvas: Canvas, w: Int, h: Int, strength: Int) {
+        val s = strength.coerceIn(0, 100) / 100f
+        val cx = w / 2f
+        val cy = h / 2f
+        // نصف القطر حتى أبعد زاوية: الظلام يبدأ من 45% ويبلغ أقصاه عند الزاوية
+        val radius = hypot(cx, cy) * (1.35f - 0.35f * s)
+        val shader = RadialGradient(
+            cx, cy, radius.coerceAtLeast(1f),
+            intArrayOf(Color.TRANSPARENT, Color.BLACK),
+            floatArrayOf(0.45f, 1f),
+            Shader.TileMode.CLAMP
+        )
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            this.shader = shader
+            alpha = (255 * 0.75f * s).toInt().coerceIn(0, 255)
+            // SRC_ATOP: يُعتّم البكسلات الموجودة فقط؛ بدونه يسوَدّ ما قُصّ (الشفاف) عند الزوايا في PNG
+            xfermode = PorterDuffXfermode(PorterDuff.Mode.SRC_ATOP)
+        }
+        canvas.drawRect(0f, 0f, w.toFloat(), h.toFloat(), paint)
     }
 
     /**
@@ -255,15 +297,18 @@ object ImageRenderer {
         canvas.restore()
     }
 
+    /**
+     * ضربة فرشاة. لكل نمط هيئته:
+     * - PEN: خط حاد بلون كامل.
+     * - MARKER: خط عريض شبه شفاف كالفلوماستر.
+     * - NEON: توهّج مموّه عريض تحت خط داخلي فاتح.
+     */
     private fun drawStrokeLayer(canvas: Canvas, layer: EditLayer.Stroke, m: Affine2) {
-        if (layer.points.size < 2) {
-            // نقطة واحدة: دائرة صغيرة
-            if (layer.points.size == 1) {
-                val p = m.apply(layer.points[0].first, layer.points[0].second)
-                val paint = paintFor(layer.opacity).apply { color = layer.color.toInt() }
-                val r = layer.widthPx * m.meanScale / 2f
-                canvas.drawCircle(p.first, p.second, r, paint)
-            }
+        val width = layer.widthPx * m.meanScale
+        if (layer.points.size == 1) {
+            // نقطة واحدة: قرص صغير بنمط الفرشاة نفسه
+            val p = m.apply(layer.points[0].first, layer.points[0].second)
+            for (paint in strokePaints(layer, width)) canvas.drawCircle(p.first, p.second, width / 2f, paint)
             return
         }
         val path = Path()
@@ -273,14 +318,39 @@ object ImageRenderer {
             if (first) { path.moveTo(mapped.first, mapped.second); first = false }
             else path.lineTo(mapped.first, mapped.second)
         }
-        val paint = paintFor(layer.opacity).apply {
+        for (paint in strokePaints(layer, width)) canvas.drawPath(path, paint)
+    }
+
+    /** دهانات الضربة بترتيب رسمها (الأرضية ثم السطح). */
+    private fun strokePaints(layer: EditLayer.Stroke, width: Float): List<Paint> {
+        fun stroke(alpha: Float, w: Float) = paintFor(layer.opacity * alpha).apply {
             color = layer.color.toInt()
             style = Paint.Style.STROKE
-            strokeWidth = layer.widthPx * m.meanScale
+            strokeWidth = w.coerceAtLeast(0.5f)
             strokeCap = Paint.Cap.ROUND
             strokeJoin = Paint.Join.ROUND
         }
-        canvas.drawPath(path, paint)
+        return when (layer.style) {
+            BrushStyle.PEN -> listOf(stroke(1f, width))
+            BrushStyle.MARKER -> listOf(stroke(0.4f, width * 2.2f))
+            BrushStyle.NEON -> listOf(
+                stroke(0.85f, width * 2.6f).apply {
+                    maskFilter = BlurMaskFilter((width * 0.9f).coerceAtLeast(0.1f), BlurMaskFilter.Blur.NORMAL)
+                },
+                stroke(0.35f, width * 2.2f),
+                // القلب الفاتح: اللون الأصلي مرفوع نحو الأبيض
+                stroke(1f, width * 0.55f).apply {
+                    color = lighten(layer.color, 0.65f)
+                }
+            )
+        }
+    }
+
+    /** يقرّب اللون من الأبيض بنسبة [amount] 0..1. */
+    private fun lighten(argb: Long, amount: Float): Int {
+        val c = argb.toInt()
+        fun ch(v: Int): Int = (v + (255 - v) * amount).toInt().coerceIn(0, 255)
+        return (c and 0xFF000000.toInt()) or (ch(Color.red(c)) shl 16) or (ch(Color.green(c)) shl 8) or ch(Color.blue(c))
     }
 
     // ---------------------------------------------------------------------

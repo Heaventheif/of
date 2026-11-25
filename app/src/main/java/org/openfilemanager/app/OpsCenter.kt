@@ -126,7 +126,7 @@ class OpsCenter(context: Context) {
 
     /** الإقرار بعد عرض النتيجة (ظهر Snackbar فعلاً): تُحذف من الطابور. */
     fun acknowledgeResult(seq: Long) {
-        _pendingResults.value = _pendingResults.value.filterNot { it.seq == seq }
+        synchronized(this) { _pendingResults.value = _pendingResults.value.filterNot { it.seq == seq } } // same lock as publishResult
     }
 
     /** Current pending conflict; one active operation, so one conflict slot suffices. */

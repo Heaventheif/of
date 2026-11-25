@@ -121,8 +121,7 @@ class PdfEngine private constructor(
                     runCatching { pfd.close() }
                 }
             }
-            closeScope.cancel()
-        }
+        }.invokeOnCompletion { closeScope.cancel() }
     }
 
     companion object {

@@ -65,7 +65,7 @@ object ThemeManager {
 
 // ---- Fallback Material 3 tonal palettes (used below Android 12 or when dynamic color is off) ----
 private val OfmLightColors = lightColorScheme(
-    primary = Color(0xFF00A152), onPrimary = Color(0xFFFFFFFF),
+    primary = Color(0xFF008542), onPrimary = Color(0xFFFFFFFF),
     primaryContainer = Color(0xFF94F7B5), onPrimaryContainer = Color(0xFF00210F),
     secondary = Color(0xFF4E6354), onSecondary = Color(0xFFFFFFFF),
     secondaryContainer = Color(0xFFD0E8D4), onSecondaryContainer = Color(0xFF0B1F13),
@@ -96,7 +96,7 @@ private val OfmDarkColors = darkColorScheme(
     surface = Color(0xFF0F1511), onSurface = Color(0xFFDFE4DC),
     surfaceVariant = Color(0xFF404942), onSurfaceVariant = Color(0xFFC0C9C0),
     outline = Color(0xFF8A938B), outlineVariant = Color(0xFF404942),
-    inverseSurface = Color(0xFFDFE4DC), inverseOnSurface = Color(0xFF2D322D), inversePrimary = Color(0xFF00A152),
+    inverseSurface = Color(0xFFDFE4DC), inverseOnSurface = Color(0xFF2D322D), inversePrimary = Color(0xFF008542),
     surfaceContainerLowest = Color(0xFF0A0F0B), surfaceContainerLow = Color(0xFF171D19),
     surfaceContainer = Color(0xFF1B211D), surfaceContainerHigh = Color(0xFF262B27),
     surfaceContainerHighest = Color(0xFF303632)

@@ -25,8 +25,11 @@ private class AudioArtFetcher(private val data: AudioArt, private val options: O
         }.getOrNull() ?: return@withContext null
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return@withContext null
+        // Sample by the longest side so extreme aspect ratios cannot blow up memory
+        val longest = maxOf(bounds.outWidth, bounds.outHeight)
         var sample = 1
-        while (bounds.outWidth / (sample * 2) >= 256 && bounds.outHeight / (sample * 2) >= 256) sample *= 2
+        while (longest / (sample * 2) >= 512) sample *= 2
         val bmp: Bitmap = BitmapFactory.decodeByteArray(
             bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample }
         ) ?: return@withContext null

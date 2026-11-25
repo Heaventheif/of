@@ -220,7 +220,7 @@ class ArchiveExtractor(
             val ext = if (dot != null) base.substring(dot) else ""
             var name = base
             var i = 1
-            while (Files.exists(dest.resolve(name), LinkOption.NOFOLLOW_LINKS)) { name = "$stem ($i)$ext"; i++ }
+            while (i <= 100_000 && Files.exists(dest.resolve(name), LinkOption.NOFOLLOW_LINKS)) { name = "$stem ($i)$ext"; i++ }
             AtomicIO.moveNoReplace(src, dest.resolve(name))
         }
     }
@@ -230,7 +230,7 @@ class ArchiveExtractor(
      * بدل tmp (بلا تدوير مزدوج)؛ وإلا فtmp نفسه هو الجذر.
      */
     private fun unwrapRoot(tmp: Path, finalName: String): Path {
-        val children = Files.list(tmp).use { it.toList() }
+        val children = Files.list(tmp).use { s -> s.iterator().asSequence().toList() }
         if (children.size != 1) return tmp
         val only = children[0]
         return if (Files.isDirectory(only) && only.fileName.toString().equals(finalName, ignoreCase = true)) only else tmp

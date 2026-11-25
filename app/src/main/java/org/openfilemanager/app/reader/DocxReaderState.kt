@@ -79,6 +79,8 @@ class DocxReaderState(
     private var saveJob: Job? = null
     private var bookmarkJob: Job? = null
     private var fontJob: Job? = null
+    private var persistJob: Job? = null
+    private val ioScope = CoroutineScope(kotlinx.coroutines.SupervisorJob() + AppDispatchers.io)
     private val main = Handler(Looper.getMainLooper())
 
     /** The URL the WebView loads: parameters give the right theme and font size from the first paint. */
@@ -90,9 +92,11 @@ class DocxReaderState(
     suspend fun load(systemDark: Boolean) {
         status = ReaderStatus.Loading
         contentReady = false
-        if (!file.exists()) { status = ReaderStatus.Error(R.string.rd_err_missing, false); return }
-        if (!file.canRead()) { status = ReaderStatus.Error(R.string.rd_err_unreadable, true); return }
-        if (file.length() > MAX_BYTES) { status = ReaderStatus.Error(R.string.rd_err_too_large, true); return }
+        // Disk stats off the main thread
+        val (exists, readable, length) = withContext(AppDispatchers.io) { Triple(file.exists(), file.canRead(), file.length()) }
+        if (!exists) { status = ReaderStatus.Error(R.string.rd_err_missing, false); return }
+        if (!readable) { status = ReaderStatus.Error(R.string.rd_err_unreadable, true); return }
+        if (length > MAX_BYTES) { status = ReaderStatus.Error(R.string.rd_err_too_large, true); return }
         val head = withContext(AppDispatchers.io) {
             try {
                 FileInputStream(file).use { s ->
@@ -209,7 +213,9 @@ class DocxReaderState(
     fun persistPositionNow() {
         if (!contentReady || docId.isEmpty()) return
         val pos = ReadingPosition(block, blockFraction, progress, System.currentTimeMillis())
-        kotlinx.coroutines.CoroutineScope(AppDispatchers.io).launch { store.savePosition(docId, ReaderFormat.DOCX, pos) }
+        // One tracked in-flight save (latest wins); not tied to the screen scope so the final save on close survives
+        persistJob?.cancel()
+        persistJob = ioScope.launch { store.savePosition(docId, ReaderFormat.DOCX, pos) }
     }
 
     // ---- bookmarks ------------------------------------------------------------------------------------------

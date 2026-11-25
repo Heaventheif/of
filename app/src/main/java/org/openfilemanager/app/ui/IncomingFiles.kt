@@ -49,8 +49,8 @@ object IncomingFiles {
      * يفرض الحد الإجمالي: يحذف مجلدات incoming_* الأقدم أولاً حتى ينزل
      * الإجمالي (بما فيه [extraBytes] للطلب القادم) تحت الميزانية.
      */
-    private fun enforceTotalBudget(ctx: Context, extraBytes: Long) {
-        val dirs = ctx.cacheDir.listFiles { f -> f.isDirectory && f.name.startsWith("incoming_") }
+    private fun enforceTotalBudget(ctx: Context, extraBytes: Long, keep: File? = null) {
+        val dirs = ctx.cacheDir.listFiles { f -> f.isDirectory && f.name.startsWith("incoming_") && f != keep }
             ?.sortedBy { it.lastModified() } ?: return
         var total = dirs.sumOf { runCatching { sizeOf(it) }.getOrDefault(0L) } + extraBytes
         for (old in dirs) {
@@ -84,10 +84,20 @@ object IncomingFiles {
                     }
                 }
                 val safe = (name ?: uri.lastPathSegment?.substringAfterLast('/') ?: "file")
-                    .replace(Regex("[\\\\/:*?\"<>|\u0000]"), "_").trim().ifEmpty { "file" }.take(120)
+                    .replace(Regex("[\\\\/:*?\"<>|\u0000]"), "_").trim().ifEmpty { "file" }.let { s ->
+                        // Truncate by UTF-8 bytes (limit is 255 bytes), leaving room for " (n)"
+                        var end = minOf(s.length, 120)
+                        while (end > 0 && s.substring(0, end).toByteArray(Charsets.UTF_8).size > 200) end--
+                        s.substring(0, end).ifEmpty { "file" }
+                    }
+                    .let { if (it == "." || it == "..") "file" else it }
                 var target = File(dir, safe)
                 var n = 1
-                while (target.exists()) target = File(dir, "${safe.substringBeforeLast('.', safe)} ($n)${safe.substringAfterLast('.', "").let { if (it.isEmpty() || it == safe) "" else ".$it" }}").also { n++ }
+                // Dotfiles (".gitignore") keep their whole name as the stem
+                val dot = safe.lastIndexOf('.').takeIf { it > 0 }
+                val stem = if (dot != null) safe.substring(0, dot) else safe
+                val ext = if (dot != null) safe.substring(dot) else ""
+                while (target.exists() && n <= 100_000) target = File(dir, "$stem ($n)$ext").also { n++ }
                 val input = when (uri.scheme) {
                     "content" -> ctx.contentResolver.openInputStream(uri)
                     "file" -> uri.path?.let { java.io.FileInputStream(File(it)) }
@@ -109,7 +119,9 @@ object IncomingFiles {
             // الحد الإجمالي بعد النسخ أيضاً: هذا الطلب وحده قد يجاوز الميزانية
             // إن كانت المشاركة ضخمة؛ يُحذف الأقدم قبله (المجلد الجديد محسوب
             // أصلاً في المجموع، فلا يُحسب مرتين).
-            enforceTotalBudget(ctx, extraBytes = 0L)
+            // (F-new) المجلد الحالي مستثنى من الحذف: لا نُرجع مسارات محذوفة.
+            if (total > TOTAL_CACHE_BUDGET) throw IOException("size")
+            enforceTotalBudget(ctx, extraBytes = total, keep = dir)
             return out
         } catch (t: Throwable) {
             runCatching { dir.deleteRecursively() }

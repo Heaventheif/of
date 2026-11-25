@@ -60,7 +60,7 @@ class DraftStore(private val dir: Path) {
     fun pending(): List<Pair<String, String>> {
         if (!Files.isDirectory(dir)) return emptyList()
         val drafts = Files.list(dir).use { stream ->
-            stream.filter { it.fileName.toString().endsWith(".draft") }.toList()
+            stream.iterator().asSequence().filter { it.fileName.toString().endsWith(".draft") }.toList()
         }
         return drafts.mapNotNull { f ->
             runCatching {

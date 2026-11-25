@@ -14,7 +14,7 @@ object ExifOrientation {
     fun read(file: Path): Int {
         Files.newInputStream(file).use { input ->
             val head = ByteArray(2)
-            if (input.readNBytes(head, 0, 2) < 2 || head[0] != 0xFF.toByte() || head[1] != 0xD8.toByte()) return 1
+            if (input.readUpTo(head, 0, 2) < 2 || head[0] != 0xFF.toByte() || head[1] != 0xD8.toByte()) return 1
             while (true) {
                 val m0 = input.read()
                 if (m0 != 0xFF) return 1
@@ -34,11 +34,11 @@ object ExifOrientation {
                 val len = ((lenHi and 0xFF) shl 8) or (lenLo and 0xFF)
                 if (len < 2) return 1
                 if (marker != 0xE1) {
-                    runCatching { input.skipNBytes((len - 2).toLong()) }
+                    runCatching { input.skipFully((len - 2).toLong()) }
                         .onFailure { return 1 } // مقطوع داخل المقطع: لا اتجاه معلوماً
                     continue
                 }
-                val payload = input.readNBytes(len - 2)
+                val payload = input.readUpTo(len - 2)
                 return orientationFromExif(payload)
             }
         }

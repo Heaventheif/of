@@ -16,7 +16,7 @@ object ArchiveFormat {
     /** الكشف ببصمة الملف أولاً (zip/gz/xz)، ثم اسمه لمعرفة أن المحتوى TAR. */
     fun detect(archive: Path): Kind {
         val magic = ByteArray(6)
-        val read = Files.newInputStream(archive).use { it.readNBytes(magic, 0, magic.size) }
+        val read = Files.newInputStream(archive).use { it.readUpTo(magic, 0, magic.size) }
         val name = archive.fileName.toString().lowercase()
         val tarName = name.endsWith(".tar") || name.contains(".tar.") || name.endsWith(".tgz") || name.endsWith(".txz")
         fun b(i: Int, v: Int) = magic[i] == v.toByte()

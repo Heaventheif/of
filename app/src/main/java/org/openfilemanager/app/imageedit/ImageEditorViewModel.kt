@@ -13,6 +13,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.openfilemanager.app.AppDispatchers
@@ -21,15 +22,27 @@ import org.openfilemanager.app.imageedit.engine.CutEngine
 import org.openfilemanager.app.imageedit.engine.ImageDecoder
 import org.openfilemanager.app.imageedit.engine.ImageExporter
 import org.openfilemanager.app.imageedit.engine.ImageRenderer
+import org.openfilemanager.app.imageedit.model.BrushStyle
+import org.openfilemanager.app.imageedit.model.CUT_EDGE_DEFAULT
+import org.openfilemanager.app.imageedit.model.CUT_TOLERANCE_DEFAULT
 import org.openfilemanager.app.imageedit.model.CutMode
 import org.openfilemanager.app.imageedit.model.CutOp
+import org.openfilemanager.core.imageedit.CutShape
 import org.openfilemanager.app.imageedit.model.EditLayer
 import org.openfilemanager.app.imageedit.model.EditorTool
 import org.openfilemanager.app.imageedit.model.ExportFormat
 import org.openfilemanager.app.imageedit.model.ShapeKind
 import org.openfilemanager.app.imageedit.model.TextAlignment
+import org.openfilemanager.app.imageedit.model.acceptsFeather
+import org.openfilemanager.app.imageedit.model.acceptsTolerance
 import org.openfilemanager.app.imageedit.model.isInteractiveWith
+import org.openfilemanager.app.imageedit.model.withFeather
+import org.openfilemanager.app.imageedit.model.withTolerance
+import org.openfilemanager.core.imageedit.Adjust
+import org.openfilemanager.core.imageedit.CutAlgorithms
+import org.openfilemanager.core.imageedit.CutShapes
 import org.openfilemanager.core.imageedit.EditHistory
+import org.openfilemanager.core.imageedit.FilterPreset
 import org.openfilemanager.core.imageedit.FloatRect
 import org.openfilemanager.core.imageedit.ImageTransform
 import java.nio.file.Paths
@@ -52,6 +65,8 @@ class ImageEditorViewModel(app: Application, val imagePath: String) : AndroidVie
         /** مقياس المعاينة: بكسل معاينة لكل وحدة مستند (< 1). */
         val previewScale: Float = 1f,
         val transform: ImageTransform = ImageTransform(),
+        /** تعديلات الصورة الأساس (الإضاءة/الألوان/الفلاتر/التظليل الحوافي). */
+        val adjust: Adjust = Adjust(),
         val layers: List<EditLayer> = emptyList(),
         val selectedLayerId: Long? = null,
         val tool: EditorTool = EditorTool.NONE,
@@ -62,6 +77,7 @@ class ImageEditorViewModel(app: Application, val imagePath: String) : AndroidVie
         // إعدادات الأدوات (خارج التاريخ)
         val drawColor: Long = 0xFF00E476,
         val drawWidthScreenPx: Float = 8f,
+        val drawStyle: BrushStyle = BrushStyle.PEN,
         val drawEraser: Boolean = false,
         val shapeKind: ShapeKind = ShapeKind.RECT,
         val shapeStrokeColor: Long = 0xFF00E476,
@@ -70,10 +86,27 @@ class ImageEditorViewModel(app: Application, val imagePath: String) : AndroidVie
         // القص الحر وقص الخلفية
         val cutOps: List<CutOp> = emptyList(),
         val cutMode: CutMode = CutMode.KEEP,
-        val cutTolerance: Int = 30
+        /** شكل حدود القصّ في وضعي الإبقاء والمسح: حر أو مربع/دائرة... */
+        val cutShape: CutShape = CutShape.FREE,
+        val cutTolerance: Int = CUT_TOLERANCE_DEFAULT,
+        /** إحكام الحواف 0..100: يمنع نزيف قصّ الخلفية عبر الحواف الناعمة. */
+        val cutEdge: Int = CUT_EDGE_DEFAULT,
+        /** تنعيم حافة القصّ 0..100 (0 = حادة). */
+        val cutFeather: Int = 0,
+        /** سماكة فرش الممحاة/الاستعادة/الموزاييك على الشاشة. */
+        val cutBrushScreenPx: Float = 36f,
+        /** صلابة الفرش 100 = حافة حادة. */
+        val cutBrushHardness: Int = 100
     ) {
         val selected: EditLayer? get() = layers.firstOrNull { it.id == selectedLayerId }
     }
+
+    /** عنصر قصّ حي قيد الرسم على القماش (يُعرض كتراكب ولا يدخل التاريخ حتى يُثبَّت). */
+    data class LiveCut(
+        val mode: CutMode,
+        val points: List<Pair<Float, Float>>,
+        val brushScreenPx: Float = 0f
+    )
 
     sealed interface EditorEvent {
         data class Message(val res: Int, val arg: String? = null) : EditorEvent
@@ -83,6 +116,7 @@ class ImageEditorViewModel(app: Application, val imagePath: String) : AndroidVie
 
     private data class Snapshot(
         val transform: ImageTransform,
+        val adjust: Adjust,
         val layers: List<EditLayer>,
         val cutOps: List<CutOp> = emptyList()
     )
@@ -96,10 +130,23 @@ class ImageEditorViewModel(app: Application, val imagePath: String) : AndroidVie
     private val _preview = MutableStateFlow<Bitmap?>(null)
     val preview: StateFlow<Bitmap?> = _preview.asStateFlow()
 
+    private val _liveCut = MutableStateFlow<LiveCut?>(null)
+    /** الحدّ الحر قيد الرسم على القماش (يقرأه القماش لرسم التراكب). */
+    val liveCut: StateFlow<LiveCut?> = _liveCut.asStateFlow()
+
+    private val _showOriginal = MutableStateFlow(false)
+    /** «قبل»: اضغط مع الاستمرار على زر المقارنة لعرض الأصل بلا أي تعديل. */
+    val showOriginal: StateFlow<Boolean> = _showOriginal.asStateFlow()
+
+    private val _thumbBase = MutableStateFlow<Bitmap?>(null)
+    /** نسخة مصغّرة من الأصل لمعاينة الفلاتر في لوحة التعديل. */
+    val thumbBase: StateFlow<Bitmap?> = _thumbBase.asStateFlow()
+
     private var basePreview: Bitmap? = null
+    private var originalPreview: Bitmap? = null
     private var exifOrientation = 1
     private val history = EditHistory<Snapshot>()
-    private var initialSnap: Snapshot = Snapshot(ImageTransform(), emptyList())
+    private var initialSnap: Snapshot = Snapshot(ImageTransform(), Adjust(), emptyList())
     private var renderJob: Job? = null
     /** (تصحيح) إشارة إعادة رسم مدموجة: طلبات كثيرة متلاحقة = رسم واحد بأحدث حالة. */
     private val renderSignal = Channel<Unit>(Channel.CONFLATED)
@@ -109,10 +156,13 @@ class ImageEditorViewModel(app: Application, val imagePath: String) : AndroidVie
     private var gestureLayer: EditLayer? = null
     private var eraseRecorded = false
     private var lastTextRecordAt = 0L
+    /** نقاط فرش القصّ الجارية (قائمة غير قابلة للتعديل تُستبدل بكل نقطة). */
+    private var brushPoints: List<Pair<Float, Float>>? = null
 
     init {
         viewModelScope.launch(AppDispatchers.io) { load() }
         startRenderLoop()
+        viewModelScope.launch { _showOriginal.drop(1).collect { requestRender() } }
     }
 
     // ------------------------------------------------------------------
@@ -133,8 +183,14 @@ class ImageEditorViewModel(app: Application, val imagePath: String) : AndroidVie
                 return
             }
             basePreview = decoded
+            _thumbBase.value = runCatching {
+                val k = 72f / maxOf(decoded.width, decoded.height)
+                Bitmap.createScaledBitmap(
+                    decoded, maxOf(1, (decoded.width * k).toInt()), maxOf(1, (decoded.height * k).toInt()), true
+                )
+            }.getOrNull()
             val scale = decoded.width.toFloat() / bounds.width
-            initialSnap = Snapshot(ImageTransform(), emptyList())
+            initialSnap = Snapshot(ImageTransform(), Adjust(), emptyList())
             _state.value = _state.value.copy(
                 loading = false,
                 name = path.fileName?.toString() ?: imagePath.substringAfterLast('/'),
@@ -142,6 +198,7 @@ class ImageEditorViewModel(app: Application, val imagePath: String) : AndroidVie
                 docH = bounds.height.toFloat(),
                 previewScale = scale,
                 transform = ImageTransform(),
+                adjust = Adjust(),
                 layers = emptyList()
             )
             requestRender()
@@ -167,6 +224,14 @@ class ImageEditorViewModel(app: Application, val imagePath: String) : AndroidVie
             for (signal in renderSignal) {
                 val base = basePreview ?: continue
                 val s = _state.value
+                if (_showOriginal.value) {
+                    // «قبل»: الأصل بلا قصّ ولا فلاتر ولا طبقات (يُرسم مرة واحدة ويُخزَّن)
+                    val orig = originalPreview ?: runCatching {
+                        ImageRenderer.render(base, ImageTransform(), emptyList(), s.previewScale, opaqueBackground = false)
+                    }.getOrNull()?.also { originalPreview = it }
+                    if (orig != null) _preview.value = orig
+                    continue
+                }
                 // أثناء أداة القصّ تُعرض اللوحة الكاملة قبل القصّ لتظهر المنطقة في سياقها
                 val t = if (s.tool == EditorTool.CROP) s.transform.withCrop(null) else s.transform
                 val extras = buildList {
@@ -176,11 +241,11 @@ class ImageEditorViewModel(app: Application, val imagePath: String) : AndroidVie
                 // (تصحيح M4) فشل الرسم لا يُهمل صامتاً: محاولة إضافية ثم إبقاء آخر معاينة ناجحة
                 val renderBase = runCatching { cutBaseFor(base, s) }.getOrDefault(base)
                 var rendered = runCatching {
-                    ImageRenderer.render(renderBase, t, s.layers + extras, s.previewScale, opaqueBackground = false)
+                    ImageRenderer.render(renderBase, t, s.layers + extras, s.previewScale, opaqueBackground = false, adjust = s.adjust)
                 }.getOrNull()
                 if (rendered == null) {
                     rendered = runCatching {
-                        ImageRenderer.render(renderBase, t, s.layers + extras, s.previewScale, opaqueBackground = false)
+                        ImageRenderer.render(renderBase, t, s.layers + extras, s.previewScale, opaqueBackground = false, adjust = s.adjust)
                     }.getOrNull()
                 }
                 if (rendered != null) _preview.value = rendered
@@ -188,18 +253,32 @@ class ImageEditorViewModel(app: Application, val imagePath: String) : AndroidVie
         }
     }
 
-    /** آخر نتيجة قص محسوبة (تُستعمل فقط من خيط الرسم المتسلسل). */
+    /** آخر نتيجة للعمليات المُثبَّتة (تُستعمل فقط من خيط الرسم المتسلسل). */
     private var cutCache: Pair<List<CutOp>, Bitmap>? = null
 
-    /** الصورة الأساس بعد تطبيق عمليات القص؛ تُحسب تزايدياً وتُخزَّن مؤقتاً. */
+    /** عنصر فرشاة قصّ حي (ممحاة/استعادة/موزاييك) يُطبَّق فوق العمليات المُثبَّتة. */
+    @Volatile private var liveCutOp: CutOp? = null
+
+    /**
+     * الصورة الأساس بعد عمليات القصّ المُثبَّتة وعنصر الفرشاة الحي إن وُجد.
+     * المُثبَّتة تُحسب تزايدياً وتُخزَّن مؤقتاً؛ الحي يُطبَّق على نسخة من نتيجتها
+     * كل إطار، فلا يعاد بناء كل العمليات أثناء سحب الفرشاة.
+     */
     private fun cutBaseFor(base: Bitmap, s: EditorUiState): Bitmap {
+        val live = liveCutOp
         val ops = s.cutOps
-        if (ops.isEmpty()) return base
+        if (ops.isEmpty() && live == null) return base
+        val committed = if (ops.isEmpty()) base else committedBase(base, ops, s.docW)
+        if (live == null) return committed
+        return runCatching { CutEngine.apply(committed, listOf(live), s.docW, original = base) }.getOrDefault(committed)
+    }
+
+    private fun committedBase(base: Bitmap, ops: List<CutOp>, docW: Float): Bitmap {
         val c = cutCache
         if (c != null && c.first == ops) return c.second
         val result = if (c != null && ops.size > c.first.size && ops.subList(0, c.first.size) == c.first)
-            CutEngine.apply(c.second, ops.drop(c.first.size), s.docW)
-        else CutEngine.apply(base, ops, s.docW)
+            CutEngine.apply(c.second, ops.drop(c.first.size), docW, original = base)
+        else CutEngine.apply(base, ops, docW)
         cutCache = ops to result
         return result
     }
@@ -217,13 +296,14 @@ class ImageEditorViewModel(app: Application, val imagePath: String) : AndroidVie
         // "Canvas: trying to use a recycled bitmap"). البت ماب على API 26+
         // يُحررها جامع النفايات فور انعدام المراجع.
         basePreview = null
+        CutEngine.releaseCaches()
         super.onCleared()
     }
 
     // ------------------------------------------------------------------
     // بنية التعديل والتاريخ
 
-    private fun snapshotOf(s: EditorUiState) = Snapshot(s.transform, s.layers, s.cutOps)
+    private fun snapshotOf(s: EditorUiState) = Snapshot(s.transform, s.adjust, s.layers, s.cutOps)
 
     private fun refreshFlags(s: EditorUiState): EditorUiState {
         val snap = snapshotOf(s)
@@ -283,7 +363,10 @@ class ImageEditorViewModel(app: Application, val imagePath: String) : AndroidVie
         val s = _state.value
         val selection = s.selectedLayerId?.takeIf { id -> snap.layers.any { it.id == id } }
         _state.value = refreshFlags(
-            s.copy(transform = snap.transform, layers = snap.layers, cutOps = snap.cutOps, selectedLayerId = selection)
+            s.copy(
+                transform = snap.transform, adjust = snap.adjust, layers = snap.layers,
+                cutOps = snap.cutOps, selectedLayerId = selection
+            )
         )
         requestRender()
     }
@@ -300,11 +383,14 @@ class ImageEditorViewModel(app: Application, val imagePath: String) : AndroidVie
         clearLive()
     }
 
-    fun setDrawSettings(color: Long? = null, widthScreenPx: Float? = null, eraser: Boolean? = null) {
+    fun setDrawSettings(
+        color: Long? = null, widthScreenPx: Float? = null, eraser: Boolean? = null, style: BrushStyle? = null
+    ) {
         _state.value = _state.value.copy(
             drawColor = color ?: _state.value.drawColor,
             drawWidthScreenPx = widthScreenPx ?: _state.value.drawWidthScreenPx,
-            drawEraser = eraser ?: _state.value.drawEraser
+            drawEraser = eraser ?: _state.value.drawEraser,
+            drawStyle = style ?: _state.value.drawStyle
         )
     }
 
@@ -320,12 +406,43 @@ class ImageEditorViewModel(app: Application, val imagePath: String) : AndroidVie
         )
     }
 
-    // ---- القص الحر وقص الخلفية
+    // ---- التعديلات (الإضاءة/الألوان/الفلاتر)
 
-    fun setCutSettings(mode: CutMode? = null, tolerance: Int? = null) {
+    /** يطبّق فلتراً جاهزاً: قيمه تصير قيم الشرائح فتبقى قابلة للضبط الدقيق. */
+    fun applyFilter(filter: FilterPreset) {
+        mutate { it.copy(adjust = filter.adjust) }
+    }
+
+    /** تعديل أحد مفردات الضبط بلا تسجيل لكل إطار؛ يسجّله التزام المنزلق مرة. */
+    fun updateAdjust(record: Boolean = false, block: (Adjust) -> Adjust) {
+        mutate(record) { it.copy(adjust = block(it.adjust)) }
+    }
+
+    fun resetAdjust() {
+        if (_state.value.adjust.isIdentity) return
+        mutate { it.copy(adjust = Adjust()) }
+    }
+
+    /** «قبل/بعد»: عرض الأصل طوال الضغط على زر المقارنة. */
+    fun setShowOriginal(show: Boolean) {
+        _showOriginal.value = show
+    }
+
+    // ---- القصّ الحر وقصّ الخلفية
+
+    fun setCutSettings(mode: CutMode? = null, shape: CutShape? = null) {
         val cur = _state.value
-        _state.value = cur.copy(cutMode = mode ?: cur.cutMode, cutTolerance = tolerance ?: cur.cutTolerance)
-        if (mode != null) clearLive()
+        _state.value = cur.copy(cutMode = mode ?: cur.cutMode, cutShape = shape ?: cur.cutShape)
+        if (mode != null || shape != null) clearLive()
+    }
+
+    /** سماكة وصلابة فرش الممحاة/الاستعادة/الموزاييك. */
+    fun setCutBrush(sizeScreenPx: Float? = null, hardness: Int? = null) {
+        val cur = _state.value
+        _state.value = cur.copy(
+            cutBrushScreenPx = (sizeScreenPx ?: cur.cutBrushScreenPx).coerceIn(4f, 300f),
+            cutBrushHardness = (hardness ?: cur.cutBrushHardness).coerceIn(0, 100)
+        )
     }
 
     /** استعادة الصورة الأصلية بإلغاء كل عمليات القص (قابلة للتراجع). */
@@ -334,34 +451,80 @@ class ImageEditorViewModel(app: Application, val imagePath: String) : AndroidVie
         mutate { it.copy(cutOps = emptyList()) }
     }
 
-    override fun onLassoPoint(docX: Float, docY: Float, start: Boolean) {
-        val s = _state.value
-        if (start || liveStroke == null) {
-            liveStroke = EditLayer.Stroke(
-                id = -1, centerX = 0f, centerY = 0f,
-                points = listOf(Pair(docX, docY)),
-                color = if (s.cutMode == CutMode.ERASE) 0xFFFF5252 else 0xFF00E5FF,
-                widthPx = 3f / s.previewScale
+    /** حذف آخر عملية قصّ فقط (لمسة عصا زائدة مثلاً) — قابلة للتراجع. */
+    fun removeLastCut() {
+        if (_state.value.cutOps.isEmpty()) return
+        mutate { it.copy(cutOps = it.cutOps.dropLast(1)) }
+    }
+
+    /** إزالة الخلفية تلقائياً: يُقدَّر لون الإطار وتُمسح كل ما يتصل به منه. */
+    fun autoRemoveBackground() {
+        mutate { it.copy(cutOps = it.cutOps + CutOp.AutoBg(it.cutTolerance, it.cutEdge, it.cutFeather)) }
+    }
+
+    /**
+     * ضبط الحساسية/إحكام الحواف/التنعيم. يُثبَّت على آخر عملية قصّ إن كانت تقبلها
+     * (عصا/تلقائي: الثلاثة؛ حدود يدوية: التنعيم فقط)، فيعدّل المستخدم لمسته
+     * الأخيرة بدل تكرارها — ويبقى قابلاً للتراجع عبر التزام المنزلق.
+     */
+    fun setCutTuning(tolerance: Int? = null, edgeStop: Int? = null, feather: Int? = null) {
+        val cur = _state.value
+        val newTol = (tolerance ?: cur.cutTolerance).coerceIn(0, 100)
+        val newEdge = (edgeStop ?: cur.cutEdge).coerceIn(0, 100)
+        val newFeather = (feather ?: cur.cutFeather).coerceIn(0, 100)
+        mutate(record = false) { st ->
+            val last = st.cutOps.lastOrNull()
+            val retuned = last?.let { op ->
+                when {
+                    op.acceptsTolerance -> op.withTolerance(newTol, newEdge).withFeather(newFeather)
+                    op.acceptsFeather -> op.withFeather(newFeather)
+                    else -> op
+                }
+            }
+            st.copy(
+                cutTolerance = newTol, cutEdge = newEdge, cutFeather = newFeather,
+                cutOps = if (retuned != null && retuned != last) st.cutOps.dropLast(1) + retuned else st.cutOps
             )
+        }
+    }
+
+    /** لمسة العصا: تمسح المنطقة المتصلة المشابهة للون تحت الإصبع. */
+    override fun onCutTap(docX: Float, docY: Float) {
+        val s = _state.value
+        if (docX < 0f || docY < 0f || docX > s.docW || docY > s.docH) return
+        mutate { it.copy(cutOps = it.cutOps + CutOp.Wand(docX, docY, it.cutTolerance, it.cutEdge, it.cutFeather)) }
+    }
+
+    /** نقطة حدّ حر (start = بداية رسم جديد). */
+    override fun onCutPathPoint(docX: Float, docY: Float, start: Boolean) {
+        val s = _state.value
+        val cur = _liveCut.value
+        _liveCut.value = if (start || cur == null) {
+            LiveCut(s.cutMode, listOf(Pair(docX, docY)))
         } else {
-            liveStroke = liveStroke?.let { it.copy(points = it.points + Pair(docX, docY)) }
+            cur.copy(points = cur.points + Pair(docX, docY))
         }
         requestRender()
     }
 
-    override fun onLassoFinish() {
-        val stroke = liveStroke
-        liveStroke = null
+    /** حدود شكل قصّ (مربع/دائرة...) أثناء السحب. */
+    override fun onCutShapePoints(points: List<Pair<Float, Float>>) {
+        _liveCut.value = LiveCut(_state.value.cutMode, points)
+        requestRender()
+    }
+
+    /** نهاية رسم الحدّ: تخفيف وتنعيم النقاط ثم تثبيت عملية الإبقاء/المسح. */
+    override fun onCutPathFinish() {
+        val live = _liveCut.value
+        _liveCut.value = null
         val s = _state.value
-        if (stroke == null || stroke.points.size < 3) { requestRender(); return }
-        val minD = 2f / s.previewScale
-        val pts = ArrayList<Pair<Float, Float>>()
-        for (p in stroke.points) {
-            val last = pts.lastOrNull()
-            if (last == null || kotlin.math.hypot(p.first - last.first, p.second - last.second) >= minD) pts.add(p)
-        }
-        if (pts.size < 3) { requestRender(); return }
-        val op: CutOp = if (s.cutMode == CutMode.ERASE) CutOp.Erase(pts) else CutOp.Keep(pts)
+        if (live == null) { requestRender(); return }
+        // تخفيف نقاط اللمس ثم قصّ الزوايا: حدّ مستقر وناعم لا خط مكسور بإصبع مرتجف
+        val pts = CutAlgorithms.smoothClosed(
+            CutAlgorithms.thinOut(live.points, 1.5f / s.previewScale, { it.first }, { it.second })
+        )
+        if (!CutShapes.isValid(pts, 2f)) { requestRender(); return }
+        val op: CutOp = if (live.mode == CutMode.ERASE) CutOp.Erase(pts, s.cutFeather) else CutOp.Keep(pts, s.cutFeather)
         mutate { st ->
             var t = st.transform
             // القص الحر: تُقصّ الحواف الشفافة تلقائياً إن كانت الصورة بلا تدوير/قلب/قص سابق
@@ -377,10 +540,35 @@ class ImageEditorViewModel(app: Application, val imagePath: String) : AndroidVie
         }
     }
 
-    override fun onCutTap(docX: Float, docY: Float) {
+    /** نقطة فرشاة قصّ (ممحاة/استعادة/موزاييك): start = بداية ضربة جديدة. */
+    override fun onCutBrushPoint(docX: Float, docY: Float, start: Boolean) {
         val s = _state.value
-        if (docX < 0f || docY < 0f || docX > s.docW || docY > s.docH) return
-        mutate { it.copy(cutOps = it.cutOps + CutOp.Wand(docX, docY, it.cutTolerance)) }
+        if (start || brushPoints == null) brushPoints = listOf(Pair(docX, docY))
+        else brushPoints = brushPoints!! + Pair(docX, docY)
+        publishLiveBrush()
+        requestRender()
+    }
+
+    private fun publishLiveBrush() {
+        val s = _state.value
+        val pts = brushPoints ?: return
+        val w = s.cutBrushScreenPx / s.previewScale
+        liveCutOp = when (s.cutMode) {
+            CutMode.ERASER -> CutOp.EraseStroke(pts, w, s.cutBrushHardness)
+            CutMode.RESTORE -> CutOp.Restore(pts, w, s.cutBrushHardness)
+            CutMode.MOSAIC -> CutOp.Pixelate(pts, w)
+            else -> null
+        }
+        _liveCut.value = LiveCut(s.cutMode, pts, s.cutBrushScreenPx)
+    }
+
+    /** نهاية ضربة الفرشاة: تُثبَّت العملية التي كانت تُعرض حيّاً. */
+    override fun onCutBrushFinish() {
+        val op = liveCutOp
+        liveCutOp = null
+        brushPoints = null
+        _liveCut.value = null
+        if (op != null) mutate { it.copy(cutOps = it.cutOps + op) } else requestRender()
     }
 
     fun addTextLayer() {
@@ -586,7 +774,7 @@ class ImageEditorViewModel(app: Application, val imagePath: String) : AndroidVie
             liveStroke = EditLayer.Stroke(
                 id = -1, centerX = 0f, centerY = 0f,
                 points = listOf(Pair(docX, docY)),
-                color = s.drawColor, widthPx = w
+                color = s.drawColor, widthPx = w, style = s.drawStyle
             )
         } else {
             liveStroke = liveStroke?.let { it.copy(points = it.points + Pair(docX, docY)) }
@@ -659,6 +847,9 @@ class ImageEditorViewModel(app: Application, val imagePath: String) : AndroidVie
     private fun clearLive() {
         liveStroke = null
         liveShape = null
+        liveCutOp = null
+        brushPoints = null
+        _liveCut.value = null
         requestRender()
     }
 
@@ -690,12 +881,16 @@ class ImageEditorViewModel(app: Application, val imagePath: String) : AndroidVie
     // ------------------------------------------------------------------
     // الحفظ
 
-    fun saveCopy(baseName: String, format: ExportFormat, quality: Int) {
+    /** @param scale تغيير حجم المخرَج: 1 = القرار الأصلي (بعد القصّ)، وأقل للتصغير. */
+    fun saveCopy(baseName: String, format: ExportFormat, quality: Int, scale: Float = 1f) {
         if (_state.value.saving) return
         _state.value = _state.value.copy(saving = true)
         viewModelScope.launch(AppDispatchers.io) {
             val s = _state.value
-            val result = ImageExporter.saveAsCopy(getApplication(), imagePath, s.transform, s.layers, s.cutOps, baseName, format, quality)
+            val result = ImageExporter.saveAsCopy(
+                getApplication(), imagePath, s.transform, s.layers, s.cutOps,
+                baseName, format, quality, adjust = s.adjust, scale = scale
+            )
             _state.value = _state.value.copy(saving = false)
             if (result.ok) _events.tryEmit(EditorEvent.Saved(result.path ?: ""))
             else _events.tryEmit(EditorEvent.Failed(R.string.ie_save_failed))
@@ -707,7 +902,9 @@ class ImageEditorViewModel(app: Application, val imagePath: String) : AndroidVie
         _state.value = _state.value.copy(saving = true)
         viewModelScope.launch(AppDispatchers.io) {
             val s = _state.value
-            val result = ImageExporter.replaceOriginal(getApplication(), imagePath, s.transform, s.layers, s.cutOps, quality)
+            val result = ImageExporter.replaceOriginal(
+                getApplication(), imagePath, s.transform, s.layers, s.cutOps, quality, adjust = s.adjust
+            )
             _state.value = _state.value.copy(saving = false)
             if (result.ok) _events.tryEmit(EditorEvent.Saved(result.path ?: ""))
             else _events.tryEmit(EditorEvent.Failed(R.string.ie_replace_failed))
@@ -748,11 +945,20 @@ interface EditorCanvasController {
     /** نهاية إيماءة التحرير: يُغلق إدخال التاريخ المفتوح في [beginGesture]. */
     fun endGesture()
 
-    /** حدود حرة للقص (start = بداية رسم جديد). */
-    fun onLassoPoint(docX: Float, docY: Float, start: Boolean)
+    /** نقطة حدّ حر للقص (start = بداية رسم جديد). */
+    fun onCutPathPoint(docX: Float, docY: Float, start: Boolean)
 
-    /** نهاية رسم الحدود: تُثبَّت عملية القص. */
-    fun onLassoFinish()
+    /** حدود شكل قصّ (مربع/دائرة...) أثناء السحب. */
+    fun onCutShapePoints(points: List<Pair<Float, Float>>)
+
+    /** نهاية رسم الحدّ: تُثبَّت عملية القص. */
+    fun onCutPathFinish()
+
+    /** نقطة فرشاة قصّ: ممحاة/استعادة/موزاييك (start = بداية ضربة). */
+    fun onCutBrushPoint(docX: Float, docY: Float, start: Boolean)
+
+    /** نهاية ضربة فرشاة القصّ. */
+    fun onCutBrushFinish()
 
     /** لمسة العصا السحرية (قص الخلفية). */
     fun onCutTap(docX: Float, docY: Float)

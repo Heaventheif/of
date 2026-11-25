@@ -33,6 +33,11 @@ import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.FlipToBack
 import androidx.compose.material.icons.outlined.FlipToFront
 import androidx.compose.material.icons.outlined.AutoAwesome
+import androidx.compose.material.icons.outlined.Brush
+import androidx.compose.material.icons.outlined.CleaningServices
+import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.RotateLeft
+import androidx.compose.material.icons.outlined.RotateRight
 import androidx.compose.material.icons.outlined.FontDownload
 import androidx.compose.material.icons.outlined.FormatBold
 import androidx.compose.material.icons.outlined.FormatItalic
@@ -71,6 +76,7 @@ import androidx.compose.ui.unit.dp
 import org.openfilemanager.app.R
 import org.openfilemanager.app.imageedit.ImageEditorViewModel
 import org.openfilemanager.app.imageedit.ImageEditorViewModel.EditorUiState
+import org.openfilemanager.app.imageedit.model.BrushStyle
 import org.openfilemanager.app.imageedit.model.EditLayer
 import org.openfilemanager.app.imageedit.engine.ImageRenderer
 import org.openfilemanager.app.imageedit.model.EditorFontFamily
@@ -79,17 +85,11 @@ import org.openfilemanager.app.imageedit.model.TextAlignment
 import org.openfilemanager.core.imageedit.CropMath
 import org.openfilemanager.core.imageedit.FloatRect
 
-/** ألوان جاهزة متسقة مع هوية التطبيق (الأخضر الأساسي بينها). */
-private val PALETTE = longArrayOf(
-    0xFFFFFFFF, 0xFF000000, 0xFF00E476, 0xFFE53935, 0xFFFB8C00,
-    0xFFFDD835, 0xFF1E88E5, 0xFF8E24AA, 0xFFD81B60, 0xFF00ACC1
-)
-
 /** أقصى ارتفاع للوحة الأداة: تضيّقه الشاشة عند ظهور لوحة المفاتيح كي تبقى الصورة ظاهرة. */
 val LocalPanelMaxHeight = androidx.compose.runtime.compositionLocalOf { 300.dp }
 
 @Composable
-private fun PanelColumn(content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit) {
+fun PanelColumn(content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit) {
     Column(
         Modifier
             .fillMaxWidth()
@@ -103,32 +103,13 @@ private fun PanelColumn(content: @Composable androidx.compose.foundation.layout.
 }
 
 @Composable
-private fun PanelLabel(text: String) {
+fun PanelLabel(text: String) {
     Text(text, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-}
-
-@Composable
-private fun ColorSwatches(selected: Long, onPick: (Long) -> Unit) {
-    Row(
-        Modifier.horizontalScroll(rememberScrollState()),
-        horizontalArrangement = Arrangement.spacedBy(10.dp)
-    ) {
-        PALETTE.forEach { c ->
-            val border = if (c == selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant
-            androidx.compose.foundation.layout.Box(
-                Modifier
-                    .size(30.dp)
-                    .background(Color(c.toInt()), CircleShape)
-                    .border(BorderStroke(if (c == selected) 3.dp else 1.dp, border), CircleShape)
-                    .clickable { onPick(c) }
-            )
-        }
-    }
 }
 
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
-private fun LabeledSlider(
+fun LabeledSlider(
     label: String,
     value: Float,
     range: ClosedFloatingPointRange<Float>,
@@ -165,6 +146,7 @@ fun EditorToolPanel(
     onCropRectChange: (FloatRect?) -> Unit
 ) {
     when (state.tool) {
+        org.openfilemanager.app.imageedit.model.EditorTool.ADJUST -> AdjustToolPanel(vm, state)
         org.openfilemanager.app.imageedit.model.EditorTool.TEXT -> TextToolPanel(vm, state)
         org.openfilemanager.app.imageedit.model.EditorTool.CROP -> CropToolPanel(vm, state, cropRect, onCropRectChange)
         org.openfilemanager.app.imageedit.model.EditorTool.IMAGE -> ImageToolPanel(vm, state)
@@ -228,7 +210,7 @@ private fun TextToolPanel(vm: ImageEditorViewModel, state: EditorUiState) {
                 TextTab.STYLE -> TextStyleSection(vm, sel, state)
                 TextTab.COLOR -> {
                     PanelLabel(stringResource(R.string.ie_color))
-                    ColorSwatches(sel.color) { c -> vm.updateSelectedText { it.copy(color = c) } }
+                    EditorColorRow(sel.color) { c -> vm.updateSelectedText { it.copy(color = c) } }
                 }
                 TextTab.EFFECTS -> TextEffectsSection(vm, sel, state)
                 TextTab.LAYER -> LayerCommonRow(vm, state)
@@ -378,7 +360,7 @@ private fun TextEffectsSection(vm: ImageEditorViewModel, sel: EditLayer.Text, st
         label = { Text(stringResource(R.string.ie_outline)) })
     if (sel.outline) {
         PanelLabel(stringResource(R.string.ie_outline_color))
-        ColorSwatches(sel.outlineColor ?: 0xFF000000) { c -> vm.updateSelectedText { it.copy(outlineColor = c) } }
+        EditorColorRow(sel.outlineColor ?: 0xFF000000) { c -> vm.updateSelectedText { it.copy(outlineColor = c) } }
         val widthScreen = (if (sel.outlineWidthPx > 0f) sel.outlineWidthPx else sel.fontSizePx * 0.08f) * state.previewScale
         TextSlider(vm, stringResource(R.string.ie_outline_width), widthScreen, 1f..24f) { t, v ->
             t.copy(outlineWidthPx = v / state.previewScale)
@@ -389,7 +371,7 @@ private fun TextEffectsSection(vm: ImageEditorViewModel, sel: EditLayer.Text, st
         label = { Text(stringResource(R.string.ie_shadow)) })
     if (sel.shadow) {
         PanelLabel(stringResource(R.string.ie_shadow_color))
-        ColorSwatches(sel.shadowColor or 0xFF000000L) { c ->
+        EditorColorRow(sel.shadowColor or 0xFF000000L) { c ->
             vm.updateSelectedText { it.copy(shadowColor = (c and 0x00FFFFFFL) or (it.shadowColor and 0xFF000000L)) }
         }
     }
@@ -400,7 +382,7 @@ private fun TextEffectsSection(vm: ImageEditorViewModel, sel: EditLayer.Text, st
     val bg = sel.bgColor
     if (bg != null) {
         PanelLabel(stringResource(R.string.ie_bg_color))
-        ColorSwatches(bg or 0xFF000000L) { c ->
+        EditorColorRow(bg or 0xFF000000L) { c ->
             vm.updateSelectedText { it.copy(bgColor = (c and 0x00FFFFFFL) or ((it.bgColor ?: 0xCC000000) and 0xFF000000L)) }
         }
         val alphaPct = ((bg ushr 24) and 0xFFL).toFloat() / 255f * 100f
@@ -452,15 +434,17 @@ private fun CropToolPanel(
 ) {
     val (pw, ph) = state.transform.preCropSize(state.docW, state.docH)
     val full = FloatRect.xywh(0f, 0f, pw, ph)
+    val t = state.transform
     PanelColumn {
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        PanelLabel(stringResource(R.string.ie_crop_ratio))
+        Row(
+            Modifier.horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
             FilterChip(selected = cropRect == null || cropRect == full,
                 onClick = { onCropRectChange(full) },
                 label = { Text(stringResource(R.string.ie_crop_free)) })
-            listOf(
-                1f to R.string.ie_crop_1_1, (4f / 3f) to R.string.ie_crop_4_3,
-                (16f / 9f) to R.string.ie_crop_16_9, (3f / 4f) to R.string.ie_crop_3_4
-            ).forEach { (aspect, label) ->
+            CROP_ASPECTS.forEach { (aspect, label) ->
                 FilterChip(
                     selected = cropRect?.let { r ->
                         kotlin.math.abs(r.width / r.height - aspect) < 0.01f
@@ -470,15 +454,40 @@ private fun CropToolPanel(
                 )
             }
         }
+        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            IconButton(onClick = { vm.rotateQuarter(-1) }) {
+                Icon(Icons.Outlined.RotateLeft, stringResource(R.string.ie_rotate_ccw))
+            }
+            IconButton(onClick = { vm.rotateQuarter(1) }) {
+                Icon(Icons.Outlined.RotateRight, stringResource(R.string.ie_rotate_cw))
+            }
+            IconButton(onClick = { vm.flipTransform(horizontal = true) }) {
+                Icon(Icons.Outlined.SwapHoriz, stringResource(R.string.ie_flip_h))
+            }
+            IconButton(onClick = { vm.flipTransform(horizontal = false) }) {
+                Icon(Icons.Outlined.SwapVert, stringResource(R.string.ie_flip_v))
+            }
+        }
+        // تدوير دقيق: معاينة بلا تسجيل أثناء السحب، وإدخال واحد عند رفع الإصبع
+        LabeledSlider(stringResource(R.string.ie_straighten), t.freeRotation, -45f..45f) { v, done ->
+            if (done) vm.setFreeRotation(v) else vm.setFreeRotationLive(v)
+        }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             FilledTonalButton(onClick = { onCropRectChange(full) }) { Text(stringResource(R.string.ie_crop_reset)) }
             FilledTonalButton(onClick = {
                 vm.applyCrop(cropRect?.takeIf { it != full })
+                vm.selectTool(org.openfilemanager.app.imageedit.model.EditorTool.CROP)
             }) { Text(stringResource(R.string.ie_crop_apply)) }
         }
         PanelLabel(stringResource(R.string.ie_crop_hint))
     }
 }
+
+private val CROP_ASPECTS = listOf(
+    1f to R.string.ie_crop_1_1, (4f / 3f) to R.string.ie_crop_4_3, (3f / 4f) to R.string.ie_crop_3_4,
+    (16f / 9f) to R.string.ie_crop_16_9, (9f / 16f) to R.string.ie_crop_9_16,
+    (3f / 2f) to R.string.ie_crop_3_2, (2f / 3f) to R.string.ie_crop_2_3
+)
 
 // ---------------------------------------------------------------------
 // الصور المضافة
@@ -521,12 +530,29 @@ private fun DrawToolPanel(vm: ImageEditorViewModel, state: EditorUiState) {
         FilterChip(
             selected = state.drawEraser,
             onClick = { vm.setDrawSettings(eraser = !state.drawEraser) },
-            label = { Text(stringResource(R.string.ie_eraser_strokes)) }
+            label = { Text(stringResource(R.string.ie_eraser_strokes)) },
+            leadingIcon = { Icon(Icons.Outlined.CleaningServices, null, Modifier.size(18.dp)) }
         )
         if (!state.drawEraser) {
+            PanelLabel(stringResource(R.string.ie_brush_style))
+            Row(
+                Modifier.horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                BrushStyle.entries.forEach { style ->
+                    FilterChip(
+                        selected = state.drawStyle == style,
+                        onClick = { vm.setDrawSettings(style = style) },
+                        label = { Text(stringResource(BRUSH_STYLE_LABEL[style] ?: R.string.ie_brush_pen)) },
+                        leadingIcon = {
+                            Icon(BRUSH_STYLE_ICON[style] ?: Icons.Outlined.Edit, null, Modifier.size(18.dp))
+                        }
+                    )
+                }
+            }
             PanelLabel(stringResource(R.string.ie_color))
-            ColorSwatches(state.drawColor) { c -> vm.setDrawSettings(color = c) }
-            LabeledSlider(stringResource(R.string.ie_brush_width), state.drawWidthScreenPx, 2f..40f) { v, done ->
+            EditorColorRow(state.drawColor) { c -> vm.setDrawSettings(color = c) }
+            LabeledSlider(stringResource(R.string.ie_brush_width), state.drawWidthScreenPx, 2f..60f) { v, _ ->
                 vm.setDrawSettings(widthScreenPx = v)
             }
         } else {
@@ -536,52 +562,17 @@ private fun DrawToolPanel(vm: ImageEditorViewModel, state: EditorUiState) {
     }
 }
 
-// ---------------------------------------------------------------------
-// القص الحر وقص الخلفية
+private val BRUSH_STYLE_LABEL = mapOf(
+    BrushStyle.PEN to R.string.ie_brush_pen,
+    BrushStyle.MARKER to R.string.ie_brush_marker,
+    BrushStyle.NEON to R.string.ie_brush_neon
+)
 
-@Composable
-private fun CutToolPanel(vm: ImageEditorViewModel, state: EditorUiState) {
-    val mode = state.cutMode
-    PanelColumn {
-        androidx.compose.foundation.layout.Row(
-            horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp)
-        ) {
-            FilterChip(
-                selected = mode == org.openfilemanager.app.imageedit.model.CutMode.KEEP,
-                onClick = { vm.setCutSettings(mode = org.openfilemanager.app.imageedit.model.CutMode.KEEP) },
-                label = { Text(stringResource(R.string.ie_cut_keep)) }
-            )
-            FilterChip(
-                selected = mode == org.openfilemanager.app.imageedit.model.CutMode.ERASE,
-                onClick = { vm.setCutSettings(mode = org.openfilemanager.app.imageedit.model.CutMode.ERASE) },
-                label = { Text(stringResource(R.string.ie_cut_erase)) }
-            )
-            FilterChip(
-                selected = mode == org.openfilemanager.app.imageedit.model.CutMode.WAND,
-                onClick = { vm.setCutSettings(mode = org.openfilemanager.app.imageedit.model.CutMode.WAND) },
-                label = { Text(stringResource(R.string.ie_cut_wand)) }
-            )
-        }
-        PanelLabel(
-            stringResource(
-                when (mode) {
-                    org.openfilemanager.app.imageedit.model.CutMode.KEEP -> R.string.ie_cut_hint_keep
-                    org.openfilemanager.app.imageedit.model.CutMode.ERASE -> R.string.ie_cut_hint_erase
-                    org.openfilemanager.app.imageedit.model.CutMode.WAND -> R.string.ie_cut_hint_wand
-                }
-            )
-        )
-        if (mode == org.openfilemanager.app.imageedit.model.CutMode.WAND) {
-            LabeledSlider(stringResource(R.string.ie_cut_tolerance), state.cutTolerance.toFloat(), 2f..90f) { v, _ ->
-                vm.setCutSettings(tolerance = v.toInt())
-            }
-        }
-        androidx.compose.material3.OutlinedButton(
-            onClick = { vm.resetCut() },
-            enabled = state.cutOps.isNotEmpty()
-        ) { Text(stringResource(R.string.ie_cut_reset)) }
-    }
-}
+private val BRUSH_STYLE_ICON = mapOf(
+    BrushStyle.PEN to Icons.Outlined.Edit,
+    BrushStyle.MARKER to Icons.Outlined.Brush,
+    BrushStyle.NEON to Icons.Outlined.AutoAwesome
+)
 
 // ---------------------------------------------------------------------
 // الأشكال — أيقونات هندسية حقيقية (تُرسم بنفس مسارات المحرّك) بدل الأسماء النصية
@@ -710,7 +701,7 @@ private fun ShapesToolPanel(vm: ImageEditorViewModel, state: EditorUiState) {
 
     PanelColumn {
         PanelLabel(stringResource(R.string.ie_color))
-        ColorSwatches(activeStroke) { c ->
+        EditorColorRow(activeStroke) { c ->
             vm.setShapeSettings(strokeColor = c)
             if (sel != null) vm.updateSelectedShape { it.copy(strokeColor = c) }
         }
@@ -729,7 +720,7 @@ private fun ShapesToolPanel(vm: ImageEditorViewModel, state: EditorUiState) {
                 label = { Text(stringResource(R.string.ie_shape_fill)) }
             )
             if (activeFill != null) {
-                ColorSwatches(activeFill) { c ->
+                EditorColorRow(activeFill) { c ->
                     vm.setShapeSettings(fillColor = c)
                     if (sel != null) vm.updateSelectedShape { it.copy(fillColor = c) }
                 }

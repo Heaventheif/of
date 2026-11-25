@@ -274,7 +274,7 @@ class ZipModel internal constructor(val archive: Path, entries: LinkedHashMap<St
         val isDir = Files.isDirectory(path)
         val top = uniqueName(folder, base, isDir)
         if (isDir) {
-            val collected = collectTree(top, path)
+            val collected = collectTree(top, path, maxEntries - map.size)
             if (map.size + collected.size > maxEntries) {
                 throw ZipEditException(ZipEditException.Reason.UNSUPPORTED, "too many entries")
             }
@@ -310,7 +310,7 @@ class ZipModel internal constructor(val archive: Path, entries: LinkedHashMap<St
      * وبسقف عمق [MAX_TREE_DEPTH]. الروابط الرمزية تُتجاهل كما كان.
      * سقف العدد الكلي يُفحص في [add] بعد الجمع (النموذج لا يتغير عند الفشل).
      */
-    private fun collectTree(top: String, root: Path): List<CollectedEntry> {
+    private fun collectTree(top: String, root: Path, limit: Int): List<CollectedEntry> {
         val out = ArrayList<CollectedEntry>()
         val stack = ArrayDeque<Pair<Path, Pair<String, Int>>>() // (المسار الفعلي، بادئة الاسم داخل الأرشيف + العمق)
         stack.addLast(root to (top to 0))
@@ -330,6 +330,8 @@ class ZipModel internal constructor(val archive: Path, entries: LinkedHashMap<St
                 }
             }
             for (child in children) {
+                // Enforce the entry cap while collecting, before the whole tree is materialized
+                if (out.size >= limit) throw ZipEditException(ZipEditException.Reason.UNSUPPORTED, "too many entries")
                 val base = child.fileName.toString()
                 if (Files.isDirectory(child, LinkOption.NOFOLLOW_LINKS)) {
                     val name = "$prefix$base/"

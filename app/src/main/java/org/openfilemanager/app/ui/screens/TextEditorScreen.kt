@@ -481,11 +481,11 @@ private fun StyleSheet(style: EditorStyle, onDismiss: () -> Unit) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(stringResource(R.string.ui_font_size), Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
                 IconButton({ style.size = (style.size - 1).coerceAtLeast(MIN_SIZE) }, enabled = style.size > MIN_SIZE) {
-                    Icon(Icons.Outlined.Remove, null)
+                    Icon(Icons.Outlined.Remove, stringResource(R.string.ui_font_size) + " −")
                 }
                 Text("${style.size}", Modifier.width(32.dp), textAlign = TextAlign.Center, style = MaterialTheme.typography.bodyLarge)
                 IconButton({ style.size = (style.size + 1).coerceAtMost(MAX_SIZE) }, enabled = style.size < MAX_SIZE) {
-                    Icon(Icons.Outlined.Add, null)
+                    Icon(Icons.Outlined.Add, stringResource(R.string.ui_font_size) + " +")
                 }
             }
 

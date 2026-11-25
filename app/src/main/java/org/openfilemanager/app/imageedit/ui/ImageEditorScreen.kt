@@ -3,6 +3,12 @@ package org.openfilemanager.app.imageedit.ui
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -28,6 +34,8 @@ import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.Redo
 import androidx.compose.material.icons.automirrored.outlined.Undo
 import androidx.compose.material.icons.outlined.Brush
+import androidx.compose.material.icons.outlined.Compare
+import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material.icons.outlined.Category
 import androidx.compose.material.icons.outlined.ContentCut
 import androidx.compose.material.icons.outlined.Crop
@@ -63,6 +71,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import java.io.File
@@ -80,6 +89,7 @@ import org.openfilemanager.app.ui.components.SheetAction
 import org.openfilemanager.app.ui.components.SnackKind
 import org.openfilemanager.app.ui.components.show
 import org.openfilemanager.core.imageedit.FloatRect
+import kotlin.math.roundToInt
 
 /**
  * شاشة محرّر الصور: شريط علوي (رجوع/تراجع/إعادة/حفظ) + قماش + لوحة خيارات
@@ -96,6 +106,7 @@ fun ImageEditorScreen(path: String, onBack: () -> Unit, onSaved: () -> Unit = {}
     }
     val state by vm.state.collectAsStateWithLifecycle()
     val preview by vm.preview.collectAsStateWithLifecycle()
+    val liveCut by vm.liveCut.collectAsStateWithLifecycle()
     val snack = LocalSnack.current
 
     LaunchedEffect(Unit) {
@@ -155,6 +166,16 @@ fun ImageEditorScreen(path: String, onBack: () -> Unit, onSaved: () -> Unit = {}
                 maxLines = 1, overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f)
             )
+    // (تحسين) مقارنة قبل/بعد: عرض الأصل طوال الضغط على الزر بلا لمسة إضافية
+            val comparePress = remember { MutableInteractionSource() }
+            val comparing by comparePress.collectIsPressedAsState()
+            LaunchedEffect(comparing) { vm.setShowOriginal(comparing) }
+            IconButton(
+                onClick = {}, interactionSource = comparePress,
+                enabled = state.dirty && !state.saving
+            ) {
+                Icon(Icons.Outlined.Compare, stringResource(R.string.ie_compare))
+            }
             IconButton({ vm.undo() }, enabled = state.canUndo && !state.saving) {
                 Icon(Icons.AutoMirrored.Outlined.Undo, stringResource(R.string.ui_undo))
             }
@@ -191,7 +212,8 @@ fun ImageEditorScreen(path: String, onBack: () -> Unit, onSaved: () -> Unit = {}
                     preview = preview,
                     controller = vm,
                     cropRect = cropRect,
-                    onCropRectChange = { cropRect = it }
+                    onCropRectChange = { cropRect = it },
+                    liveCut = liveCut
                 )
             }
         }
@@ -213,20 +235,31 @@ fun ImageEditorScreen(path: String, onBack: () -> Unit, onSaved: () -> Unit = {}
                 Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
                 horizontalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                items(TOOLBAR_ITEMS) { (tool, icon, labelRes) ->
+                items(TOOLBAR_ITEMS) { (tool, icon, labelRes, shortRes) ->
                     val selected = state.tool == tool
-                    IconButton(
-                        onClick = { vm.selectTool(tool) },
-                        modifier = Modifier
-                            .padding(2.dp)
+                    val tint = if (selected) MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.onSurfaceVariant
+                    // (تحسين) أيقونة وعنوانها تحته: يعرف المستخدم الأداة دون تخمين معنى الأيقونة
+                    Column(
+                        Modifier
+                            .widthIn(min = 60.dp)
+                            .clip(RoundedCornerShape(12.dp))
                             .background(
                                 if (selected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
                                 RoundedCornerShape(12.dp)
                             )
+                            .clickable { vm.selectTool(tool) }
+                            .padding(horizontal = 4.dp, vertical = 6.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        Icon(
-                            icon, stringResource(labelRes),
-                            tint = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                        Icon(icon, stringResource(labelRes), tint = tint)
+                        Spacer(Modifier.height(2.dp))
+                        Text(
+                            stringResource(shortRes),
+                            style = MaterialTheme.typography.labelSmall,
+                            fontSize = 11.sp,
+                            maxLines = 1,
+                            color = tint
                         )
                     }
                 }
@@ -281,9 +314,10 @@ fun ImageEditorScreen(path: String, onBack: () -> Unit, onSaved: () -> Unit = {}
         SaveDialog(
             defaultName = ImageExporter.defaultCopyName(path),
             hasCut = state.cutOps.isNotEmpty(),
-            onSave = { name, format, quality ->
+            fullSize = exportSizeOf(state, 1f),
+            onSave = { name, format, quality, scale ->
                 showSaveDialog = false
-                vm.saveCopy(name, format, quality)
+                vm.saveCopy(name, format, quality, scale)
             },
             onDismiss = { showSaveDialog = false }
         )
@@ -316,19 +350,37 @@ fun ImageEditorScreen(path: String, onBack: () -> Unit, onSaved: () -> Unit = {}
 
 private val replaceableFormats = setOf("jpg", "jpeg", "png", "webp")
 
+/** أبعاد الصورة الناتجة (بعد القصّ والتدوير) عند نسبة تصغير [scale]. */
+private fun exportSizeOf(state: ImageEditorViewModel.EditorUiState, scale: Float): Pair<Int, Int> {
+    val (pw, ph) = state.transform.preCropSize(state.docW, state.docH)
+    val crop = state.transform.crop
+    val w = (crop?.width ?: pw) * scale
+    val h = (crop?.height ?: ph) * scale
+    return maxOf(1, w.roundToInt()) to maxOf(1, h.roundToInt())
+}
+
 private fun fullCropRectOf(state: ImageEditorViewModel.EditorUiState): FloatRect {
     val (w, h) = state.transform.preCropSize(state.docW, state.docH)
     return FloatRect.xywh(0f, 0f, w, h)
 }
 
-private val TOOLBAR_ITEMS: List<Triple<EditorTool, ImageVector, Int>> = listOf(
-    Triple(EditorTool.TEXT, Icons.Outlined.TextFields, R.string.ie_tool_text),
-    Triple(EditorTool.CROP, Icons.Outlined.Crop, R.string.ie_tool_crop),
-    Triple(EditorTool.IMAGE, Icons.Outlined.AddPhotoAlternate, R.string.ie_tool_image),
-    Triple(EditorTool.DRAW, Icons.Outlined.Brush, R.string.ie_tool_draw),
-    Triple(EditorTool.SHAPES, Icons.Outlined.Category, R.string.ie_tool_shapes),
-    Triple(EditorTool.CUT, Icons.Outlined.ContentCut, R.string.ie_tool_cut),
-    Triple(EditorTool.ROTATE, Icons.Outlined.RotateRight, R.string.ie_tool_rotate)
+/** الأداة، أيقونتها، عنوانها الوصفي (للمساعدة الصوتية) وعنوانها القصير تحت الأيقونة. */
+private data class ToolbarItem(
+    val tool: EditorTool,
+    val icon: ImageVector,
+    val labelRes: Int,
+    val shortRes: Int
+)
+
+private val TOOLBAR_ITEMS: List<ToolbarItem> = listOf(
+    ToolbarItem(EditorTool.ADJUST, Icons.Outlined.Tune, R.string.ie_tool_adjust, R.string.ie_short_adjust),
+    ToolbarItem(EditorTool.CROP, Icons.Outlined.Crop, R.string.ie_tool_crop, R.string.ie_short_crop),
+    ToolbarItem(EditorTool.CUT, Icons.Outlined.ContentCut, R.string.ie_tool_cut, R.string.ie_short_cut),
+    ToolbarItem(EditorTool.ROTATE, Icons.Outlined.RotateRight, R.string.ie_tool_rotate, R.string.ie_short_rotate),
+    ToolbarItem(EditorTool.TEXT, Icons.Outlined.TextFields, R.string.ie_tool_text, R.string.ie_short_text),
+    ToolbarItem(EditorTool.DRAW, Icons.Outlined.Brush, R.string.ie_tool_draw, R.string.ie_short_draw),
+    ToolbarItem(EditorTool.SHAPES, Icons.Outlined.Category, R.string.ie_tool_shapes, R.string.ie_short_shapes),
+    ToolbarItem(EditorTool.IMAGE, Icons.Outlined.AddPhotoAlternate, R.string.ie_tool_image, R.string.ie_short_image)
 )
 
 /** حوار حفظ نسخة جديدة: الاسم والصيغة وجودة الترميز. */
@@ -336,13 +388,16 @@ private val TOOLBAR_ITEMS: List<Triple<EditorTool, ImageVector, Int>> = listOf(
 private fun SaveDialog(
     defaultName: String,
     hasCut: Boolean = false,
-    onSave: (String, ExportFormat, Int) -> Unit,
+    fullSize: Pair<Int, Int> = 1 to 1,
+    onSave: (String, ExportFormat, Int, Float) -> Unit,
     onDismiss: () -> Unit
 ) {
     var name by rememberSaveable { mutableStateOf(defaultName) }
     var format by rememberSaveable { mutableStateOf((if (hasCut) ExportFormat.PNG else ExportFormat.JPEG).name) }
     var quality by rememberSaveable { mutableStateOf(90) }
+    var sizeIdx by rememberSaveable { mutableStateOf(0) }
     val fmt = ExportFormat.valueOf(format)
+    val scale = EXPORT_SCALES[sizeIdx]
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -394,6 +449,27 @@ private fun SaveDialog(
                     )
                 }
                 Text(
+                    stringResource(R.string.ie_export_size),
+                    style = MaterialTheme.typography.labelMedium
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    EXPORT_SCALES.forEachIndexed { i, s ->
+                        FilterChip(
+                            selected = sizeIdx == i,
+                            onClick = { sizeIdx = i },
+                            label = {
+                                Text(
+                                    if (i == 0) stringResource(R.string.ie_size_original)
+                                    else stringResource(
+                                        R.string.ie_size_result,
+                                        (fullSize.first * s).toInt(), (fullSize.second * s).toInt()
+                                    )
+                                )
+                            }
+                        )
+                    }
+                }
+                Text(
                     stringResource(R.string.ie_save_dir_hint),
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -401,10 +477,13 @@ private fun SaveDialog(
             }
         },
         confirmButton = {
-            TextButton({ onSave(name.ifEmpty { defaultName }, fmt, quality) }) {
+            TextButton({ onSave(name.ifEmpty { defaultName }, fmt, quality, scale) }) {
                 Text(stringResource(R.string.ui_save))
             }
         },
         dismissButton = { TextButton(onDismiss) { Text(stringResource(R.string.ui_cancel)) } }
     )
 }
+
+/** نسب تصغير حجم الملف عند الحفظ (تصغير الأبعاد بنفس النسبة). */
+private val EXPORT_SCALES = listOf(1f, 0.75f, 0.5f, 0.25f)

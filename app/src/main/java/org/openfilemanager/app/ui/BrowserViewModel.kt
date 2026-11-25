@@ -112,6 +112,18 @@ class BrowserViewModel(app: Application) : AndroidViewModel(app) {
     private fun sayErr(text: String) { _events.tryEmit(UiEvent.Message(text, SnackKind.ERROR)) }
     private fun sayInfo(text: String) { _events.tryEmit(UiEvent.Message(text, SnackKind.INFO)) }
     /** نجاح → أخضر، فشل → أحمر. */
+    /**
+     * Queues [request] with the operation service. The request file is written with fsync, so the
+     * blocking part runs on the IO dispatcher; [onQueued] runs on the caller's (main) context.
+     */
+    private fun enqueueAsync(request: OpRequest, onQueued: () -> Unit = {}) {
+        viewModelScope.launch {
+            val queued = withContext(AppDispatchers.io) { FileOperationService.enqueue(getApplication(), request) }
+            if (queued) onQueued()
+            sayResult(queued, if (queued) R.string.ui_op_queued else R.string.ui_op_queue_failed)
+        }
+    }
+
     private fun sayResult(ok: Boolean, id: Int) { _events.tryEmit(UiEvent.Message(str(id), if (ok) SnackKind.SUCCESS else SnackKind.ERROR)) }
     /** For UI-side helpers (intents) that need to show a short message. */
     fun notify(text: String) = say(text)
@@ -275,7 +287,10 @@ class BrowserViewModel(app: Application) : AndroidViewModel(app) {
             }
             is Location.Dir -> {
                 val parent = l.dir.parentFile
-                if (l.dir == root || parent == null) false else { navigate(Location.Dir(parent)); true }
+                val isStorageRoot = l.dir == root || runCatching {
+                    container.storage.roots().any { it.path.toFile() == l.dir }
+                }.getOrDefault(false)
+                if (isStorageRoot || parent == null) false else { navigate(Location.Dir(parent)); true }
             }
         }
     }
@@ -377,7 +392,7 @@ class BrowserViewModel(app: Application) : AndroidViewModel(app) {
     fun selectAll() = _state.update { it.copy(selection = it.visibleItems.mapTo(HashSet()) { i -> i.id }) }
     fun clearSelection() { selectionAnchor = null; _state.update { it.copy(selection = emptySet()) } }
 
-    private fun selectedItems(): List<FileItem> = _state.value.let { s -> s.items.filter { it.id in s.selection } }
+    private fun selectedItems(): List<FileItem> = _state.value.let { s -> s.visibleItems.filter { it.id in s.selection } }
 
     // ---------- operations (routed through the existing operation service) ----------
 
@@ -411,18 +426,14 @@ class BrowserViewModel(app: Application) : AndroidViewModel(app) {
         val dest = (s.location as? Location.Dir)?.dir ?: return
         val sources = clip.paths.map { File(it).toPath() }
         val request = if (clip.move) OpRequest.Move(sources, dest.toPath()) else OpRequest.Copy(sources, dest.toPath())
-        val queued = FileOperationService.enqueue(getApplication(), request)
-        if (queued) _state.update { it.copy(clipboard = null) }
-        sayResult(queued, if (queued) R.string.ui_op_queued else R.string.ui_op_queue_failed)
+        enqueueAsync(request) { _state.update { it.copy(clipboard = null) } }
     }
 
     fun deleteSelection() {
         if (_state.value.location is Location.Archive) { archiveDelete(); return }
         val paths = selectedItems().mapNotNull { it.path }.map { File(it).toPath() }
         if (paths.isEmpty()) return
-        val queued = FileOperationService.enqueue(getApplication(), OpRequest.Delete(paths))
-        if (queued) clearSelection()
-        sayResult(queued, if (queued) R.string.ui_op_queued else R.string.ui_op_queue_failed)
+        enqueueAsync(OpRequest.Delete(paths)) { clearSelection() }
     }
 
     fun rename(item: FileItem, newName: String) {
@@ -452,9 +463,7 @@ class BrowserViewModel(app: Application) : AndroidViewModel(app) {
         if (sources.isEmpty()) return
         val target = name.trim().let { if (it.endsWith(".zip", ignoreCase = true)) it else "$it.zip" }
         if (NameRules.problem(target) != null) { sayErr(str(R.string.ui_err_bad_name)); return }
-        val queued = FileOperationService.enqueue(getApplication(), OpRequest.Compress(sources, dir.toPath(), target))
-        if (queued) clearSelection()
-        sayResult(queued, if (queued) R.string.ui_op_queued else R.string.ui_op_queue_failed)
+        enqueueAsync(OpRequest.Compress(sources, dir.toPath(), target)) { clearSelection() }
     }
 
     // ---------- bulk rename (one engine for preview and execution: BatchRename.plan) ----------
@@ -786,11 +795,7 @@ class BrowserViewModel(app: Application) : AndroidViewModel(app) {
     fun extractHere(archive: File, entries: Set<String>?) {
         val dest = archive.parentFile ?: return
         val selected = entries?.toList()
-        val queued = FileOperationService.enqueue(
-            getApplication(), OpRequest.Extract(archive.toPath(), dest.toPath(), Charsets.UTF_8.name(), selected)
-        )
-        if (queued) clearSelection()
-        sayResult(queued, if (queued) R.string.ui_op_queued else R.string.ui_op_queue_failed)
+        enqueueAsync(OpRequest.Extract(archive.toPath(), dest.toPath(), Charsets.UTF_8.name(), selected)) { clearSelection() }
     }
 
     fun selectedArchiveEntries(): Set<String> =

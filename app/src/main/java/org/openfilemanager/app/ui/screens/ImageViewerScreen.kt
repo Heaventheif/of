@@ -129,19 +129,23 @@ fun ImageViewerScreen(
         ) { showMenu = false }
         if (showDetails) {
             val f = File(current)
-            val dims = remember(current) {
-                val o = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                BitmapFactory.decodeFile(current, o)
-                if (o.outWidth > 0) "\u2066${o.outWidth} × ${o.outHeight}\u2069" else "—"
+            val dims by androidx.compose.runtime.produceState("…", current) {
+                value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    val o = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                    BitmapFactory.decodeFile(current, o)
+                    if (o.outWidth > 0) "\u2066${o.outWidth} × ${o.outHeight}\u2069" else "—"
+                }
             }
             AlertDialog(
                 onDismissRequest = { showDetails = false },
                 title = { Text(BidiText.wrap(f.name)) },
                 text = {
                     Column {
-                        Text(stringResource(R.string.ui_detail_size) + ": " + Formatter.formatFileSize(ctx, f.length()))
+                        val fileSize = remember(f) { f.length() }
+                        val fileDate = remember(f) { f.lastModified() }
+                        Text(stringResource(R.string.ui_detail_size) + ": " + Formatter.formatFileSize(ctx, fileSize))
                         Text(stringResource(R.string.ui_detail_dims) + ": " + dims)
-                        Text(stringResource(R.string.ui_detail_date) + ": " + DateFormat.getDateTimeInstance().format(Date(f.lastModified())))
+                        Text(stringResource(R.string.ui_detail_date) + ": " + DateFormat.getDateTimeInstance().format(Date(fileDate)))
                         Text(stringResource(R.string.ui_detail_path) + ": " + BidiText.wrap(f.parent ?: ""), color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 },
@@ -165,7 +169,7 @@ private fun ZoomableImage(path: String, onTap: () -> Unit) {
         )
     }
     AsyncImage(
-        model = File(path), contentDescription = null, contentScale = ContentScale.Fit,
+        model = File(path), contentDescription = File(path).name, contentScale = ContentScale.Fit,
         modifier = Modifier.fillMaxSize().onSizeChanged { box = it }
             .pointerInput(Unit) {
                 detectTapGestures(

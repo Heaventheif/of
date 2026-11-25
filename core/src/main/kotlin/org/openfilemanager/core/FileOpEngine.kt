@@ -311,6 +311,21 @@ class FileOpEngine(
                 }
                 return FileVisitResult.CONTINUE
             }
+
+            override fun visitFileFailed(file: Path, exc: IOException): FileVisitResult {
+                // One unreadable entry must not abort the whole enumeration: queue it as an
+                // ordinary item so its own copy/move attempt fails (and is counted) alone.
+                checkCancelled()
+                checkItemsCap()
+                val rel = sourceRoot.relativize(file).toString()
+                items += OpItemRecord(
+                    opId = opId, index = index++, group = group,
+                    itemKind = OpItemKind.FILE, state = ItemState.PENDING,
+                    src = file.toString(), dst = dstRoot.resolve(rel).toString(),
+                    extra = rel, size = 0
+                )
+                return FileVisitResult.CONTINUE
+            }
         })
         return index
     }
@@ -474,6 +489,11 @@ class FileOpEngine(
                         mergeTreeMove(ctx, item, src, dst)
                         return
                     }
+                    if (dstIsDir) {
+                        // A directory is never a replaceable "file": refuse instead of wiping the tree.
+                        failItem(ctx, item, "refusing to replace a directory with a file")
+                        return
+                    }
                     replaceExisting = true
                 }
                 ConflictPolicy.KEEP_BOTH -> effectiveDst = uniqueName(dst, ctx)
@@ -519,7 +539,9 @@ class FileOpEngine(
         // عناصر المجموعة: جذر DIR_CREATE (نستكمل المجلد الموجود) ثم متحتوياته.
         val subItems = ArrayList<OpItemRecord>()
         subItems += item.copy(itemKind = OpItemKind.DIR_CREATE, dst = dst.toString(), extra = "")
-        enumerateTree(item.opId, item.group, src, dst, subItems, 0)
+        enumerateTree(item.opId, item.group, src, dst, subItems, 0) {
+            if (subItems.size > maxEnumeratedItems) throw IOException("enumeration exceeded $maxEnumeratedItems items; merge refused")
+        }
         // الموائمة: المطابق بـ src يبقى بفهرسه وحالته (فهرس السجل هو الهوية)،
         // والجديد يأخذ أعلى فهرس في العملية كلها +1 — لا تصادم مع عناصر startOp
         // ولا مع نقاط تفتيش دمج مجموعة أخرى في العملية نفسها.
@@ -596,9 +618,15 @@ class FileOpEngine(
                         }
                     } else {
                         journal.updateItem(item.opId, sub.index, ItemState.RUNNING)
-                        Files.createDirectories(subDst)
-                        journal.updateItem(item.opId, sub.index, ItemState.DONE)
-                        ctx.c.ok++
+                        try {
+                            Files.createDirectories(subDst)
+                            journal.updateItem(item.opId, sub.index, ItemState.DONE)
+                            ctx.c.ok++
+                        } catch (e: OperationCancelledException) {
+                            throw e
+                        } catch (e: IOException) {
+                            failItem(ctx, sub, e.message ?: "mkdir failed")
+                        }
                     }
                     ctx.emptiedSourceDirs += sub.src
                 }
@@ -805,9 +833,14 @@ class FileOpEngine(
                                     subtreeOverrides += rel to alternative
                                     // Create the directory before recording DONE so a persisted
                                     // alternate path always exists.
-                                    Files.createDirectories(alternative)
-                                    journal.updateItem(record.id, item.index, ItemState.DONE, dst = alternative.toString())
-                                    ctx.c.ok++
+                                    try {
+                                        Files.createDirectories(alternative)
+                                        journal.updateItem(record.id, item.index, ItemState.DONE, dst = alternative.toString())
+                                        ctx.c.ok++
+                                    } catch (e: IOException) {
+                                        subtreeOverrides.removeAll { it.first == rel }
+                                        failItem(ctx, item, e.message ?: "mkdir failed")
+                                    }
                                 }
                                 else -> {
                                     skipItem(ctx, item, "الوجهة ملف موجود")
@@ -816,9 +849,15 @@ class FileOpEngine(
                         }
                     } else {
                         journal.updateItem(record.id, item.index, ItemState.RUNNING)
-                        Files.createDirectories(dst)
-                        journal.updateItem(record.id, item.index, ItemState.DONE)
-                        ctx.c.ok++
+                        try {
+                            Files.createDirectories(dst)
+                            journal.updateItem(record.id, item.index, ItemState.DONE)
+                            ctx.c.ok++
+                        } catch (e: OperationCancelledException) {
+                            throw e
+                        } catch (e: IOException) {
+                            failItem(ctx, item, e.message ?: "mkdir failed")
+                        }
                     }
                 }
 
@@ -901,7 +940,8 @@ class FileOpEngine(
                 AtomicIO.copyAtomic(
                     src, effectiveDst, replace = replace,
                     onProgress = { delta -> report(delta) },
-                    checkCancelled = ::checkCancelled
+                    checkCancelled = ::checkCancelled,
+                    preserveModifiedTime = true
                 )
             }
             journal.updateItem(record.id, item.index, ItemState.DONE)

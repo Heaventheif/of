@@ -271,7 +271,9 @@ fun MediaScreen(
                                         if (selecting) toggle(m.idKey)
                                         else if (tab == LibraryTab.IMAGES) {
                                             val paths = media.mapNotNull { it.dataPath }
-                                            onViewImages(paths, paths.indexOf(m.dataPath).coerceAtLeast(0))
+                                            val at = paths.indexOf(m.dataPath)
+                                            // Missing DATA path must not open the first image
+                                            if (m.dataPath != null && at >= 0) onViewImages(paths, at) else openUriWithSystem(ctx, m.uri, m.mimeType)
                                         } else openUriWithSystem(ctx, m.uri, m.mimeType)
                                     },
                                     onLongClick = { longSelect(m.idKey) }

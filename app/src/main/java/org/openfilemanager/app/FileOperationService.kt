@@ -426,7 +426,7 @@ class FileOperationService : Service() {
             )
         } catch (e: OperationCancelledException) {
             if (timedOut) {
-                journal.finishOp(activeOpId ?: "", OpState.INTERRUPTED, 0, 0, 0, getString(R.string.op_timeout_journal))
+                runCatching { journal.finishOp(activeOpId ?: "", OpState.INTERRUPTED, 0, 0, 0, getString(R.string.op_timeout_journal)) }
                 val message = getString(R.string.op_timeout)
                 opsCenter.publishResult(message, opId)
                 publishAbortOutcome(request, opId, failed = 0, skipped = 1)
@@ -436,7 +436,7 @@ class FileOperationService : Service() {
                 publishAbortOutcome(request, opId, failed = 0, skipped = 1)
             }
         } catch (e: TargetInsideSourceException) {
-            journal.finishOp(activeOpId ?: "", OpState.FAILED, 0, 0, 0, e.message ?: "")
+            runCatching { journal.finishOp(activeOpId ?: "", OpState.FAILED, 0, 0, 0, e.message ?: "") }
             val message = getString(R.string.op_target_inside_source, e.message ?: getString(R.string.op_target_inside_source_default))
             opsCenter.publishResult(message, opId)
             publishAbortOutcome(request, opId, failed = 1, skipped = 0)
@@ -460,6 +460,7 @@ class FileOperationService : Service() {
                 .getOrDefault(label)
             runCatching { AppLog.e("ops", message, t) }
             opsCenter.publishResult(message, opId, isError = true)
+            publishAbortOutcome(request, opId, failed = 1, skipped = 0)
         } finally {
             // [0.7.9] محو علامة التنفيذ والنسخة الاحتياطية: أي خاتمة (نجاح/فشل/
             // إلغاء/خطأ قاتل) تنهي دورة حياة الطلب المعلّق فلا يُسترد مجدداً.
@@ -590,7 +591,13 @@ class FileOperationService : Service() {
                 ConflictPolicy.KEEP_BOTH -> {
                     finalNameOverride = uniqueArchiveOutputName(targetDir, naturalName, singleFileOutput)
                 }
-                ConflictPolicy.REPLACE -> {
+                ConflictPolicy.REPLACE -> if (request.selected != null &&
+                    Files.isDirectory(naturalTarget, LinkOption.NOFOLLOW_LINKS)
+                ) {
+                    // A partial extraction must never wipe an existing folder: replacing it
+                    // would delete every file that is not in the selected entries.
+                    finalNameOverride = uniqueArchiveOutputName(targetDir, naturalName, singleFileOutput)
+                } else {
                     val backup = uniqueReplaceBackup(naturalTarget)
                     // (المرحلة 2) تسجيل دائم قبل النقل: إن ماتت العملية بعد
                     // إزاحة المجلد الأصلي يعرف استرداد الإقلاع أن هذه النسخة

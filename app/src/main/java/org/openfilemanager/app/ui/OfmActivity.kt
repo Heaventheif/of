@@ -38,10 +38,10 @@ class OfmActivity : ComponentActivity() {
         // (F-16) Coil.setImageLoader انتقل إلى App.onCreate: كان يُبنى هنا في كل
         // إنشاء للنشاط فتعاد بناء الكاشات عند التدوير/تغيير اللغة ويبقى القديم بلا إغلاق.
         setContent {
-            // Layout direction is always LTR (no mirroring), whatever the app language is
+            // Layout direction is always RTL, whatever the app language is
             CompositionLocalProvider(
                 LocalActivityOwner provides this,
-                androidx.compose.ui.platform.LocalLayoutDirection provides androidx.compose.ui.unit.LayoutDirection.Ltr
+                androidx.compose.ui.platform.LocalLayoutDirection provides androidx.compose.ui.unit.LayoutDirection.Rtl
             ) {
                 val dark = org.openfilemanager.app.ui.theme.isOfmDark()
                 androidx.compose.runtime.LaunchedEffect(dark) { applyBarStyle(dark) }

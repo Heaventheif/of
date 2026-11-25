@@ -8,6 +8,7 @@ import org.openfilemanager.app.MediaLibrary
 import org.openfilemanager.app.imageedit.model.CutOp
 import org.openfilemanager.app.imageedit.model.EditLayer
 import org.openfilemanager.app.imageedit.model.ExportFormat
+import org.openfilemanager.core.imageedit.Adjust
 import org.openfilemanager.core.imageedit.ImageTransform
 import org.openfilemanager.core.AtomicIO
 import kotlinx.coroutines.withContext
@@ -54,6 +55,8 @@ object ImageExporter {
     /**
      * حفظ نسخة جديدة بجانب الأصل.
      * @param baseName الاسم بلا امتداد
+     * @param adjust تعديلات الألوان المطبَّقة على الصورة الأساس.
+     * @param scale تغيير حجم المخرَج: 1 = القرار الأصلي (بعد القصّ)، وأقل منه للتصغير.
      */
     suspend fun saveAsCopy(
         context: Context,
@@ -63,7 +66,9 @@ object ImageExporter {
         cutOps: List<CutOp>,
         baseName: String,
         format: ExportFormat,
-        quality: Int
+        quality: Int,
+        adjust: Adjust = Adjust(),
+        scale: Float = 1f
     ): ExportResult = withContext(AppDispatchers.io) {
         try {
             val src = Paths.get(originalPath)
@@ -75,7 +80,8 @@ object ImageExporter {
             val docScale = base.width.toFloat() / bounds.width
             val cutBase = if (cutOps.isEmpty()) base else CutEngine.apply(base, cutOps, bounds.width.toFloat())
             val rendered = ImageRenderer.render(
-                cutBase, transform, layers, docScale, opaqueBackground = format == ExportFormat.JPEG
+                cutBase, transform, layers, docScale * scale.coerceIn(0.05f, 1f),
+                opaqueBackground = format == ExportFormat.JPEG, adjust = adjust
             )
             if (cutBase !== base) cutBase.recycle()
             base.recycle()
@@ -86,6 +92,9 @@ object ImageExporter {
             MediaLibrary(context).scanFiles(listOf(target.toString()))
             ExportResult(true, target.toString(), null)
         } catch (e: Exception) {
+            ExportResult(false, null, null)
+        } catch (e: OutOfMemoryError) {
+            // التصدير بدقة كاملة يحتفظ بثلاث صور كبيرة معاً: يفشل بأدب بدل إسقاط التطبيق
             ExportResult(false, null, null)
         }
     }
@@ -100,7 +109,8 @@ object ImageExporter {
         transform: ImageTransform,
         layers: List<EditLayer>,
         cutOps: List<CutOp>,
-        quality: Int
+        quality: Int,
+        adjust: Adjust = Adjust()
     ): ExportResult = withContext(AppDispatchers.io) {
         try {
             val src = Paths.get(originalPath)
@@ -119,7 +129,7 @@ object ImageExporter {
             val docScale = base.width.toFloat() / bounds.width
             val cutBase = if (cutOps.isEmpty()) base else CutEngine.apply(base, cutOps, bounds.width.toFloat())
             val rendered = ImageRenderer.render(
-                cutBase, transform, layers, docScale, opaqueBackground = format == ExportFormat.JPEG
+                cutBase, transform, layers, docScale, opaqueBackground = format == ExportFormat.JPEG, adjust = adjust
             )
             if (cutBase !== base) cutBase.recycle()
             base.recycle()
@@ -129,6 +139,9 @@ object ImageExporter {
             MediaLibrary(context).scanFiles(listOf(src.toString()))
             ExportResult(true, src.toString(), null)
         } catch (e: Exception) {
+            ExportResult(false, null, null)
+        } catch (e: OutOfMemoryError) {
+            // التصدير بدقة كاملة يحتفظ بثلاث صور كبيرة معاً: يفشل بأدب بدل إسقاط التطبيق
             ExportResult(false, null, null)
         }
     }
