@@ -17,7 +17,6 @@ import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.AutoFixHigh
-import androidx.compose.material.icons.outlined.TextFields
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.MoreVert
@@ -31,6 +30,8 @@ import android.graphics.BitmapFactory
 import android.text.format.Formatter
 import java.text.DateFormat
 import java.util.Date
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
 import org.openfilemanager.app.BidiText
 import org.openfilemanager.app.FileOperationService
 import org.openfilemanager.app.OpRequest
@@ -75,6 +76,7 @@ fun ImageViewerScreen(
     onEdit: ((path: String, page: Int) -> Unit)? = null
 ) {
     val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
     val pager = rememberPagerState(initialPage = startIndex.coerceIn(0, (paths.size - 1).coerceAtLeast(0))) { paths.size }
     var chrome by remember { mutableStateOf(true) }
     var showMenu by remember { mutableStateOf(false) }
@@ -122,7 +124,8 @@ fun ImageViewerScreen(
                     )
                 }
                 add(SheetAction(Icons.Outlined.Delete, stringResource(R.string.ui_delete), destructive = true, dividerBefore = true) {
-                    FileOperationService.enqueue(ctx, OpRequest.Delete(listOf(File(current).toPath())))
+                    // (E3) كتابة ملف الطلب على IO؛ الخروج لا ينتظرها.
+                    scope.launch { FileOperationService.enqueueOnIo(ctx, OpRequest.Delete(listOf(File(current).toPath()))) }
                     onBack()
                 })
             }
@@ -131,9 +134,9 @@ fun ImageViewerScreen(
             val f = File(current)
             val dims by androidx.compose.runtime.produceState("…", current) {
                 value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                    val o = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                    BitmapFactory.decodeFile(current, o)
-                    if (o.outWidth > 0) "\u2066${o.outWidth} × ${o.outHeight}\u2069" else "—"
+                    // استخدام MediaProbe الموحّد بدل تكرار BitmapFactory.Options.
+                    val bounds = org.openfilemanager.app.MediaProbe.imageBounds(java.nio.file.Paths.get(current))
+                    if (bounds != null) "\u2066${bounds.first} × ${bounds.second}\u2069" else "—"
                 }
             }
             AlertDialog(

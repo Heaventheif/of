@@ -32,13 +32,7 @@ object AtomicIO {
 
     internal fun tempSibling(target: Path): Path = target.resolveSibling(".fm-tmp-" + UUID.randomUUID())
 
-    /**
-     * مزامنة مجلد (fsync) بعد إعادة تسمية أو حذف فيه. بيانات الملف قد تكون
-     * مكتوبة على الوسيط عبر force(true)، لكن rename(2)/unlink(2) بلا fsync
-     * للمجلد قد يضيعان بعد انقطاع الطاقة (ext4/f2fs) — فلا ذرية بلا دوام.
-     * أفضل جهد: ما لا يسمح بفتح مجلد قناةً (Jimfs في الاختبارات، بعض مزودات
-     * FUSE/MediaProvider) يتراجع بصمت إلى السلوك السابق ولا يُفشل العملية.
-     */
+    /** مزامنة مجلد (fsync) بعد إعادة تسمية أو حذف فيه. */
     internal fun fsyncDirectory(dir: Path?) {
         if (dir == null) return
         try {
@@ -171,7 +165,7 @@ object AtomicIO {
             // وصل مع onProgress للدفعة الأخيرة (بما في ذلك الملف الفارغ).
             checkCancelled()
             if (replace) {
-                // (F-08) fallback متدرج بدل فشل كامل على أنظمة لا تدعم ATOMIC_MOVE.
+                // fallback متدرج بدل فشل كامل على أنظمة لا تدعم ATOMIC_MOVE.
                 moveAtomicOrFallback(tmp, dst, replace = true)
             } else {
                 moveNoReplace(tmp, dst)
@@ -201,13 +195,7 @@ object AtomicIO {
         }
     }
 
-    /**
-     * (F-08) نقل ذري عندما تدعمه وحدة التخزين، ونقل عادي عند رفض المزود
-     * (AtomicMoveNotSupportedException: FAT/exFAT وبعض مزودات FUSE/MediaProvider).
-     * [replace] = true يستبدل هدفاً موجوداً؛ false يفشل بالعقد المعتاد
-     * (FileAlreadyExistsException) إن ظهر هدف — لا استبدال صامت في المسارين.
-     * داخلي لاختبار بروتوكول الاستبدال بمحاكاة عدم دعم النقل الذري.
-     */
+    /** نقل ذري عندما تدعمه وحدة التخزين، ونقل عادي عند رفض المزود (AtomicMoveNotSupportedException: FAT/exFAT وبعض مزودات FUSE/MediaProvider). */
     internal fun moveAtomicOrFallback(src: Path, dst: Path, replace: Boolean) {
         try {
             val options = if (replace) {
@@ -250,18 +238,7 @@ object AtomicIO {
         return digest.digest()
     }
 
-    /**
-     * نقل ملف واحد. داخل الوحدة نفسها: إعادة تسمية ذرية فورية.
-     * بين وحدتين: نسخ مع هاش ← إعادة قراءة الوجهة ومقارنة الهاش ← حذف المصدر عند التطابق فقط.
-     * عند أي فشل أو عدم تطابق يبقى المصدر سليماً وتُحذف الوجهة الناقصة.
-     *
-     * الترتيب هنا يمس سلامة البيانات بعد انقطاع الطاقة: fsync مجلد الوجهة
-     * (fsyncDirectory) يجعل rename(2) دائماً على الوسيط قبل unlink(2) للمصدر،
-     * فلا يمكن أن يضيع الملف بين الخطوتين.
-     *
-     * Limit: the verification re-read may be served from the page cache (see
-     * [dropPageCache]); the source is kept until the comparison succeeds.
-     */
+    /** نقل ملف واحد. داخل الوحدة نفسها: إعادة تسمية ذرية فورية. */
     fun moveVerified(
         src: Path,
         dst: Path,
@@ -277,7 +254,7 @@ object AtomicIO {
             // Cancellation must be checked immediately before the rename commit point.
             checkCancelled()
             if (replace) {
-                // (F-08) fallback متدرج على وسائط لا تدعم ATOMIC_MOVE (FAT/exFAT).
+                // fallback متدرج على وسائط لا تدعم ATOMIC_MOVE (FAT/exFAT).
                 moveAtomicOrFallback(src, dst, replace = true)
             } else {
                 moveNoReplace(src, dst)
@@ -298,7 +275,7 @@ object AtomicIO {
             // staged file. Keep the source and discard the staging file instead.
             checkCancelled()
             if (replace) {
-                // (F-08) fallback متدرج بدل فشل النشر على وسائط بلا نقل ذري.
+                // fallback متدرج بدل فشل النشر على وسائط بلا نقل ذري.
                 moveAtomicOrFallback(staged, dst, replace = true)
             } else {
                 moveNoReplace(staged, dst)

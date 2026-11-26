@@ -12,7 +12,7 @@ class DocFormatException(val reason: Reason) : Exception(reason.name) {
  * Parses the OLE2 container, the FIB and the piece table; no formatting, images or tables.
  */
 object DocTextExtractor {
-    private const val MAX_FILE = 50L * 1024 * 1024
+    private const val MAX_FILE = 24L * 1024 * 1024
     private const val MAX_CHARS = 5_000_000
     private val SIGNATURE = byteArrayOf(0xD0.toByte(), 0xCF.toByte(), 0x11, 0xE0.toByte(), 0xA1.toByte(), 0xB1.toByte(), 0x1A, 0xE1.toByte())
 
@@ -197,9 +197,6 @@ object DocTextExtractor {
             }
             return out.toByteArray().let { if (it.size > size) it.copyOf(size) else it }
         }
-
-        private fun u16(b: ByteArray, o: Int) = (b[o].toInt() and 0xFF) or ((b[o + 1].toInt() and 0xFF) shl 8)
-        private fun u32(b: ByteArray, o: Int): Int = u16(b, o) or (u16(b, o + 2) shl 16)
     }
 
 }

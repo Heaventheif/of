@@ -15,6 +15,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.openfilemanager.app.R
+import org.openfilemanager.app.applyLanguage
 import org.openfilemanager.app.ui.theme.OfmTheme
 
 /** The activity is the ViewModel owner; screens fetch the same instances through this. */
@@ -26,7 +27,7 @@ class OfmActivity : ComponentActivity() {
     private val browser: BrowserViewModel by viewModels()
 
     override fun attachBaseContext(newBase: android.content.Context) {
-        super.attachBaseContext(org.openfilemanager.app.LanguageManager.wrap(newBase))
+        super.attachBaseContext(newBase.applyLanguage())
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -35,7 +36,7 @@ class OfmActivity : ComponentActivity() {
         // Transparent bars; icon color follows the *app* theme (not only the system one).
         // Re-applied whenever the appearance changes, see the LaunchedEffect in setContent.
         applyBarStyle()
-        // (F-16) Coil.setImageLoader انتقل إلى App.onCreate: كان يُبنى هنا في كل
+        // Coil.setImageLoader انتقل إلى App.onCreate: كان يُبنى هنا في كل
         // إنشاء للنشاط فتعاد بناء الكاشات عند التدوير/تغيير اللغة ويبقى القديم بلا إغلاق.
         setContent {
             // Layout direction is always RTL, whatever the app language is
@@ -63,7 +64,7 @@ class OfmActivity : ComponentActivity() {
 
     override fun onStop() {
         super.onStop()
-        // (F-17) flushBlocking يعيد نجاح التفريغ فعلاً: انتهاء المهلة يُسجل
+        // flushBlocking يعيد نجاح التفريغ فعلاً: انتهاء المهلة يُسجل
         // (حالة قابلة للملاحظة في AppSettings) ولا يبدو حاجزاً مؤكداً.
         val flushed = org.openfilemanager.app.AppSettings.get(this).flushBlocking()
         if (!flushed) {

@@ -13,7 +13,6 @@ import java.util.zip.ZipFile
 import java.util.zip.ZipOutputStream
 import java.util.zip.CRC32
 
-/** دورتا مراجعة 6–7: انحدار STORED عبر ZipOut (F20) وتجاوزات KEEP_BOTH المتداخلة (F1). */
 class ReviewLoopRegressionTest {
     @get:Rule val tmp = TemporaryFolder()
     private fun dir(n: String): Path = tmp.newFolder(n).toPath()
@@ -53,7 +52,6 @@ class ReviewLoopRegressionTest {
         }
     }
 
-    // ---- دورة 7: F1 — تجاوز KEEP_BOTH داخل تجاوز KEEP_BOTH (مجلد يحتوي مجلدًا متعارضًا) ----
     @Test fun keepBothNestedInsideKeepBothAlternativeResolvesDeepestOverride() {
         val src = dir("src2")
         val dst = dir("dst2")

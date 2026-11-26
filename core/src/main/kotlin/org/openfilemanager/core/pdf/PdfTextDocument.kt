@@ -156,10 +156,7 @@ class PdfTextDocument private constructor(
     private fun contentBytes(n: PageNode): ByteArray {
         val c = file.resolve(n.dict["Contents"])
         val out = java.io.ByteArrayOutputStream()
-        // (ميزانية) مجموع محتوى صفحة واحدة محدود: مصفوفة /Contents بعدائية
-        // كانت تُجمّع مداخل كل منها 64 م.ب بلا سقف كلي فيسقط الاستخراج بلا ذاكرة
-        // — استثناء الميزانية يُرمى (لا يُبتلع مع أخطاء القيم التالفة) فيُوقف
-        // استخراج الصفحة كاملاً قبل السقوط.
+        // (ميزانية) مجموع محتوى صفحة واحدة محدود: مصفوفة /Contents بعدائية كانت تُجمّع مداخل كل منها 64 م.ب بلا سقف كلي فيسقط الاستخراج بلا ذاكرة — استثناء…
         fun add(v: Any?) {
             val s = file.resolve(v) as? PdfStream ?: return
             try {

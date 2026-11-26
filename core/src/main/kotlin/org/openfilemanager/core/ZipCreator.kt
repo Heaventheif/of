@@ -22,27 +22,12 @@ data class ZipCreateProgress(val entriesDone: Int, val entriesTotal: Int, val by
 
 class ZipCreateException(message: String) : IOException(message)
 
-/**
- * إنشاء ZIP:
- * - أسماء UTF-8 مع علم اللغة EFS للأسماء العربية.
- * - Zip64Mode.AsNeeded فلا ينهار الأرشيف الكبير.
- * - الملفات المضغوطة أصلاً تُخزَّن STORED (أسرع بلا خسارة) بعد قراءة CRC مرة واحدة.
- * - كتابة إلى ملف مؤقت حصري ثم نقل نهائي بلا استبدال؛ الفشل أو الإلغاء يحذف الجزئي ولا يلمس الهدف.
- * - الروابط الرمزية تُتجاهل مع تحذير (لا حلقات ولا خروج خارج النطاق).
- * - لا حذف للأصل بعد الضغط.
- */
+/** إنشاء ZIP: - أسماء UTF-8 مع علم اللغة EFS للأسماء العربية. */
 class ZipCreator(maxPlanEntries: Int = DEFAULT_MAX_PLAN_ENTRIES) {
 
-    /** (F-11) سقف خطة الضغط: أرشيف بعناصر أكثر يُرفض قبل أي كتابة أو استهلاك ذاكرة. */
     private val maxPlanEntries = maxPlanEntries.coerceAtLeast(1)
 
-    /**
-     * يحصي العناصر (بلا متابعة الروابط) ويحدد أسماءها داخل الأرشيف.
-     * (F-10) أسماء المداخل فريدة إلزامياً: أي تكرار (مصدران بالاسم الظاهر نفسه،
-     * أو ملف يوافق جذر مجلد آخر) يُرفض قبل أي كتابة برسالة تحدد العنصر المتعارض
-     * — بدل أرشيف غامض يرفضه ZipModel.load لاحقاً أو يعرضه مستخرجون مختلفون
-     * بنتائج مختلفة. تعارض ملف/مجلد يُرفض أيضاً (نفس سياسة ZipModel.load).
-     */
+    /** يحصي العناصر (بلا متابعة الروابط) ويحدد أسماءها داخل الأرشيف. */
     fun plan(sources: List<Path>, isCancelled: () -> Boolean = { false }): List<ZipPlanEntry> {
         val entries = ArrayList<ZipPlanEntry>()
         val usedNames = HashSet<String>() // أسماء مداخل ZIP حساسة لحالة الأحرف حسب المواصفة
@@ -103,13 +88,13 @@ class ZipCreator(maxPlanEntries: Int = DEFAULT_MAX_PLAN_ENTRIES) {
         onProgress: (ZipCreateProgress) -> Unit = {},
         isCancelled: () -> Boolean = { false }
     ): Path {
-        if (sources.isEmpty()) throw ZipCreateException("لا توجد عناصر للضغط")
-        if (Files.exists(destination, LinkOption.NOFOLLOW_LINKS)) throw ZipCreateException("الوجهة موجودة مسبقاً: $destination")
+        if (sources.isEmpty()) throw ZipCreateException(CoreOpCode.NO_ITEMS)
+        if (Files.exists(destination, LinkOption.NOFOLLOW_LINKS)) throw ZipCreateException(CoreOpCode.message(CoreOpCode.DESTINATION_EXISTS, destination))
 
         // Plan before creating the destination directory: cancellation during a
         // potentially long tree walk must not leave an otherwise empty target path.
         val entries = plan(sources, isCancelled)
-        if (entries.isEmpty()) throw ZipCreateException("لا توجد ملفات صالحة للضغط")
+        if (entries.isEmpty()) throw ZipCreateException(CoreOpCode.NO_VALID_FILES)
         if (isCancelled()) throw OperationCancelledException()
         destination.parent?.let { Files.createDirectories(it) }
         val bytesTotal = entries.filterNot { it.isDirectory }.sumOf { it.size }
@@ -244,7 +229,6 @@ class ZipCreator(maxPlanEntries: Int = DEFAULT_MAX_PLAN_ENTRIES) {
     companion object {
         private const val BUFFER = 64 * 1024
 
-        /** (F-11) سقف خطة الضغط الافتراضي — موافق على سقف ZipModel.DEFAULT_MAX_ENTRIES. */
         const val DEFAULT_MAX_PLAN_ENTRIES = 100_000
 
         /** امتدادات تُخزَّن بلا ضغط إضافي: مضغوطة أصلاً فالضغط هدر وقت بلا ربح. */

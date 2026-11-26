@@ -39,8 +39,6 @@ internal class XNode(val name: String) {
         return out
     }
 
-    /** النص المباشر في عناصر [named] تحت هذه العقدة، مجمّعاً. */
-    fun textOf(named: String): String = descendants(named).joinToString("") { it.text }
 }
 
 internal object MiniXml {

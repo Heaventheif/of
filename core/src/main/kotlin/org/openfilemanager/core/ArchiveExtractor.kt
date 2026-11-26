@@ -38,15 +38,6 @@ fun interface EntryFilter {
             }
         }
 
-        /**
-         * تحديد ملفات بعينها من واجهة المستخدم. لا يوسّع اسم الملف إلى كل
-         * المسارات التي تبدأ به؛ ذلك السلوك خاص بتحديد المجلدات في only().
-         */
-        fun exactOnly(selected: Set<String>): EntryFilter {
-            val normalized = selected.map(::normalizeSelectedName).toSet()
-            return EntryFilter { name -> normalizeSelectedName(name) in normalized }
-        }
-
         private fun normalizeSelectedName(name: String): String =
             name.replace('\\', '/').trimEnd('/')
     }
@@ -121,13 +112,7 @@ object SafeResolve {
         return normalized
     }
 
-    /**
-     * علامة جذر الأرشيف (5.1): أسماء مثل `""` و`"."` و`"./"` و`"././"` تعني
-     * الجذر نفسه لا عنصراً — `tar -czf x.tgz .` يكتبها قبل كل شيء وكانت
-     * تُمرَّر إلى [resolve] فترمي "empty path" فيفشل الأرشيف كله. الفحص في
-     * المستدعيين (المستخرج والمعاين) لا داخل resolve: سلوك resolve نفسه
-     * (رفض المسار الفارغ) محفوظ كما تختبره OpRecoveryTest/ArchiveExtractorTest.
-     */
+    /** علامة جذر الأرشيف (5.1): أسماء مثل `""` و`"."` و`"./"` و`"././"` تعني الجذر نفسه لا عنصراً — `tar -czf x.tgz .` يكتبها قبل كل شيء وكانت تُمرَّر إلى. */
     fun isRootMarker(entryName: String): Boolean {
         if ('\u0000' in entryName) return false
         val clean = entryName.replace('\\', '/')
@@ -136,23 +121,12 @@ object SafeResolve {
     }
 }
 
-/**
- * استخراج ZIP وTAR وTAR.GZ وTAR.XZ وGZ وXZ بحدود حماية.
- * يُستخرج إلى مجلد مؤقت `.fm-extract-*` في مجلد الوجهة نفسه ثم يُنقل إلى الوجهة النهائية
- * دون استبدال عنصر موجود عند النجاح،
- * والفشل أو الإلغاء يحذف المؤقت. لا كتابة فوق ملف موجود.
- * [charset] لأسماء ZIP وTAR (UTF-8 افتراضياً، وWindows-1256 بتأكيد المستخدم للأرشيفات العربية القديمة).
- */
+/** استخراج ZIP وTAR وTAR.GZ وTAR.XZ وGZ وXZ بحدود حماية. */
 class ArchiveExtractor(
     private val limits: ExtractLimits = ExtractLimits(),
     private val charset: Charset = Charsets.UTF_8
 ) {
-    /**
-     * (مراجعة 0.8.6-#2) هل نظام الملفات تحت [dir] حساس لحالة الأحرف؟ نشء ملفين
-     * يختلفان في الحالة فقط: النجاح على ext4/f2fs، والفشل بـ FileAlreadyExists
-     * على FAT/exFAT. أي إخفاق آخر يعامل بقصوى العناية: كشف التعارض بالحالة
-     * الصغيرة (الأشد)، فلا يتغير السلوك عن السابق إلا حيث الوجهة تسمح فعلاً.
-     */
+    /** (مراجعة 0.8.6-#2) هل نظام الملفات تحت [dir] حساس لحالة الأحرف؟ */
     private fun probeCaseSensitive(dir: Path): Boolean {
         val base = ".fm-case-probe-" + UUID.randomUUID().toString().take(8)
         val a = dir.resolve(base)
@@ -181,7 +155,7 @@ class ArchiveExtractor(
         filter: EntryFilter = EntryFilter.ALL,
         /** اسم بديل للنتيجة النهائية («الاسم (1)») عند وجود الاسم الأصلي في الوجهة. */
         finalNameOverride: String? = null,
-        /** [0.7.9] يُستدعى بعد اكتمال كتابة كل ملف باسم مدخله — يعلّم عناصر سجل
+        /** يُستدعى بعد اكتمال كتابة كل ملف باسم مدخله — يعلّم عناصر سجل
          *  الاسترداد DONE واحدًا واحداً (ArchiveOpEngine) فيعرف الاستئناف ما نُفذ. */
         onEntryWritten: (String) -> Unit = {},
         /** نقل/نسخ عناصر محددة من الأرشيف إلى مجلد: كل عنصر محدد يوضع مباشرة في [destinationDir]
@@ -209,11 +183,7 @@ class ArchiveExtractor(
                 session.counting = counting
                 val raw = BufferedInputStream(counting, 64 * 1024)
                 when (kind) {
-                    // (مراجعة 0.8.6-#4) القراءة عبر الترويسات المحلية (مجرى): تتسامح مع
-                    // أرشيفات تالف دليلها المركزي، لكن أسماءها قد تختلف عمّا يعرضه
-                    // المفتش (دليل مركزي) في أرشيف مُصنَّع. كل اسم يُتحقق من صحته هنا
-                    // مجدداً (SafeResolve) وكل استخراج بالاسم المحدد يفشل بإغلاق آمن
-                    // عند عدم المطابقة (ui_err_open_entry) — فالاختلاف تشكيلي لا أمني.
+                    // (مراجعة 0.8.6-#4) القراءة عبر الترويسات المحلية (مجرى): تتسامح مع أرشيفات تالف دليلها المركزي، لكن أسماءها قد تختلف عمّا يعرضه المفتش (دليل مركزي) في…
                     ArchiveFormat.Kind.ZIP -> ZipArchiveInputStream(raw, charset.name(), true, true).use { zip ->
                         session.copyEntries(zip) { zip.nextEntry }
                     }
@@ -286,7 +256,7 @@ class ArchiveExtractor(
         val onProgress: (Int, Long) -> Unit,
         val checkCancelled: () -> Unit,
         val filter: EntryFilter,
-        /** [0.7.9] رد نداء اكتمال كتابة كل ملف (انظر extract). */
+        /** رد نداء اكتمال كتابة كل ملف (انظر extract). */
         val onEntryWritten: (String) -> Unit
     ) {
         lateinit var counting: CountingInputStream

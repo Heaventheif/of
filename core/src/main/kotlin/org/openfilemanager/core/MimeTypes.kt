@@ -6,8 +6,6 @@ package org.openfilemanager.core
  * تُقرأ أول 16 بايتاً فقط؛ الاستدعاء رخيص والملف الضخم لا يُحمَّل.
  */
 object MimeTypes {
-    const val MAX_SNIFF_BYTES = 16
-
     private data class Magic(val mime: String, val bytes: ByteArray, val offset: Int = 0) {
         fun matches(data: ByteArray): Boolean {
             if (data.size < offset + bytes.size) return false
@@ -77,7 +75,4 @@ object MimeTypes {
     /** هل الملف فيديو؟ (لا مشغل داخلي — يفتح خارجياً) */
     fun isVideo(mime: String?): Boolean = mime != null && mime.startsWith("video/")
 
-    /** هل الملف APK (يُثبَّت بالمثبّت الداخلي)؟ */
-    fun isApk(mime: String?, name: String): Boolean =
-        mime == "application/vnd.android.package-archive" || name.substringAfterLast('.', "").lowercase() == "apk"
 }

@@ -2,7 +2,6 @@ package org.openfilemanager.app.imageedit.engine
 
 import android.content.Context
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import org.openfilemanager.app.AppDispatchers
 import org.openfilemanager.app.MediaLibrary
 import org.openfilemanager.app.imageedit.model.CutOp
@@ -18,20 +17,36 @@ import java.nio.file.Path
 import java.nio.file.Paths
 import kotlin.math.max
 
-/**
- * تصدير الصورة المحرّرة: يفك الأصل بقراره الكامل (بسقف أمان للذاكرة)، يرسم
- * الحالة كاملة، ثم يرمّز ويكتب كتابة ذرّية عبر AtomicIO.atomicWrite — فلا يُترك
- * الملف الوجهة تالفاً ولو فشلت العملية منتصفها — وبعدها يحدّث فهرس الوسائط.
- *
- * الأصل لا يُستبدل أبداً إلا بطلب صريح من الواجهة (استبدال بنفس الصيغة).
- */
+/** تصدير الصورة المحرّرة: يفك الأصل بقراره الكامل (بسقف أمان للذاكرة)، يرسم الحالة كاملة، ثم يرمّز ويكتب كتابة ذرّية عبر AtomicIO.atomicWrite — فلا. */
 object ImageExporter {
 
     /** سقف أمان أبعاد التصدير — بعده يُقلَّص القرار حفاظاً على الذاكرة. */
     private const val EXPORT_CAP = 8192
-    private const val PREVIEW_MAX = 2048
 
     data class ExportResult(val ok: Boolean, val path: String?, val error: Int?)
+
+    /** يفك الأصل بدقته الكاملة، يطبّق القص ثم يرسم الحالة؛ يعيد null إن تعذّر الفك. */
+    private fun renderDocument(
+        src: Path,
+        transform: ImageTransform,
+        layers: List<EditLayer>,
+        cutOps: List<CutOp>,
+        format: ExportFormat,
+        adjust: Adjust,
+        scale: Float
+    ): Bitmap? {
+        val bounds = ImageDecoder.readBounds(src) ?: return null
+        val (base, _) = ImageDecoder.decodeForExport(src, bounds.exifOrientation, EXPORT_CAP) ?: return null
+        val docScale = base.width.toFloat() / bounds.width
+        val cutBase = if (cutOps.isEmpty()) base else CutEngine.apply(base, cutOps, bounds.width.toFloat())
+        val rendered = ImageRenderer.render(
+            cutBase, transform, layers, docScale * scale.coerceIn(0.05f, 1f),
+            opaqueBackground = format == ExportFormat.JPEG, adjust = adjust
+        )
+        if (cutBase !== base) cutBase.recycle()
+        base.recycle()
+        return rendered
+    }
 
     /** توليد اسم غير مستخدم في نفس المجلد: name.jpg ثم name (1).jpg ... */
     fun uniqueName(dir: Path, baseName: String, extension: String): Path {
@@ -52,12 +67,7 @@ object ImageExporter {
         return "${base}_edited"
     }
 
-    /**
-     * حفظ نسخة جديدة بجانب الأصل.
-     * @param baseName الاسم بلا امتداد
-     * @param adjust تعديلات الألوان المطبَّقة على الصورة الأساس.
-     * @param scale تغيير حجم المخرَج: 1 = القرار الأصلي (بعد القصّ)، وأقل منه للتصغير.
-     */
+    /** حفظ نسخة جديدة بجانب الأصل. */
     suspend fun saveAsCopy(
         context: Context,
         originalPath: String,
@@ -72,19 +82,8 @@ object ImageExporter {
     ): ExportResult = withContext(AppDispatchers.io) {
         try {
             val src = Paths.get(originalPath)
-            val bounds = ImageDecoder.readBounds(src)
+            val rendered = renderDocument(src, transform, layers, cutOps, format, adjust, scale)
                 ?: return@withContext ExportResult(false, null, null)
-            val full = ImageDecoder.decodeForExport(src, bounds.exifOrientation, EXPORT_CAP)
-                ?: return@withContext ExportResult(false, null, null)
-            val (base, _) = full
-            val docScale = base.width.toFloat() / bounds.width
-            val cutBase = if (cutOps.isEmpty()) base else CutEngine.apply(base, cutOps, bounds.width.toFloat())
-            val rendered = ImageRenderer.render(
-                cutBase, transform, layers, docScale * scale.coerceIn(0.05f, 1f),
-                opaqueBackground = format == ExportFormat.JPEG, adjust = adjust
-            )
-            if (cutBase !== base) cutBase.recycle()
-            base.recycle()
             val target = uniqueName(src.parent ?: Paths.get("."), baseName, format.extension)
             val ok = writeBitmap(rendered, target, format, quality)
             rendered.recycle()
@@ -118,18 +117,8 @@ object ImageExporter {
                 "webp" -> ExportFormat.WEBP
                 else -> return@withContext ExportResult(false, null, null) // HEIC وغيرها لا تُستبدل بصيغة أخرى
             }
-            val bounds = ImageDecoder.readBounds(src)
+            val rendered = renderDocument(src, transform, layers, cutOps, format, adjust, 1f)
                 ?: return@withContext ExportResult(false, null, null)
-            val full = ImageDecoder.decodeForExport(src, bounds.exifOrientation, EXPORT_CAP)
-                ?: return@withContext ExportResult(false, null, null)
-            val (base, _) = full
-            val docScale = base.width.toFloat() / bounds.width
-            val cutBase = if (cutOps.isEmpty()) base else CutEngine.apply(base, cutOps, bounds.width.toFloat())
-            val rendered = ImageRenderer.render(
-                cutBase, transform, layers, docScale, opaqueBackground = format == ExportFormat.JPEG, adjust = adjust
-            )
-            if (cutBase !== base) cutBase.recycle()
-            base.recycle()
             val ok = writeBitmap(rendered, src, format, quality)
             rendered.recycle()
             if (!ok) return@withContext ExportResult(false, null, null)

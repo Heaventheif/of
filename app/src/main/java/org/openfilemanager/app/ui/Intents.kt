@@ -16,7 +16,7 @@ import org.openfilemanager.app.appContainer
 private const val APK_MIME = "application/vnd.android.package-archive"
 
 /**
- * (تصحيح) getUriForFile يرمي IllegalArgumentException لملفات خارج الجذور المصرَّح
+ * getUriForFile يرمي IllegalArgumentException لملفات خارج الجذور المصرَّح
  * بها في file_paths.xml (مثلاً بطاقة SD قابلة للإزالة) — كل النداة هنا تحمي
  * النداء بـ runCatching وتُبلغ المستخدم، كالتوأم في FileFeatures.ShareIntents.
  */
@@ -25,9 +25,6 @@ private fun uriFor(ctx: Context, path: String): Uri =
 
 fun mimeOf(path: String): String =
     MimeTypeMap.getSingleton().getMimeTypeFromExtension(File(path).extension.lowercase()) ?: "*/*"
-
-fun providerUris(ctx: Context, paths: List<String>): List<String> =
-    paths.mapNotNull { p -> runCatching { uriFor(ctx, p).toString() }.getOrNull() }
 
 /** إطلاق نية مع إبلاغ المستخدم عند الفشل: لا ابتلاع صامت لاستثناءات التطبيقات الخارجية. */
 private fun launchOrTell(
@@ -51,7 +48,7 @@ private fun launchOrTell(
 /** ClipData carries the name and lets the share sheet draw a real preview instead of a generic icon. */
 fun shareFiles(ctx: Context, paths: List<String>) {
     if (paths.isEmpty()) return
-    // (تصحيح) ملف خارج الجذور المصرَّح بها (بطاقة قابلة للإزالة) لا يُشارَك:
+    // ملف خارج الجذور المصرَّح بها (بطاقة قابلة للإزالة) لا يُشارَك:
     // رسالة مفهومة بدل انهيار FileProvider.getUriForFile.
     val uris = ArrayList<Uri>(paths.size)
     paths.forEach { p ->

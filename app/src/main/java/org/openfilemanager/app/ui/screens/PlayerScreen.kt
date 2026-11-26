@@ -278,9 +278,6 @@ fun MiniPlayer(onOpen: () -> Unit) {
     val s by PlayerBus.state.collectAsStateWithLifecycle()
     val cover by PlayerBus.cover.collectAsStateWithLifecycle()
     // لا يظهر إلا لخدمة تعمل فعلاً ولديها قائمة تشغيل (حالة فارغة/قديمة = مخفي).
-    // (تصحيح) مزامنة مع الخدمة عند كل عودة للتطبيق: إن كانت الخدمة حيّة نطلب منها نشر
-    // حالتها الحالية (قد تغيرت أثناء الغياب بمقاطعة من تطبيق آخر)، وإن ماتت نمسح الحالة
-    // القديمة كي لا يبقى مشغل بأزرار ميتة.
     androidx.lifecycle.compose.LifecycleEventEffect(androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
         if (MusicPlaybackService.running) MusicPlaybackService.command(ctx, MusicPlaybackService.ACTION_SYNC)
         else {

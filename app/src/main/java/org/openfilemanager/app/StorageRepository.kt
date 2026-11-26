@@ -33,7 +33,6 @@ data class FileEntry(
     val modified: Long,
     val path: Path
 ) {
-    val localFile: File get() = path.toFile()
 }
 
 /**
@@ -44,17 +43,6 @@ class StorageRepository(private val context: Context) {
 
     /** Full file-tree access is available only through the Android 11+ special access. */
     fun hasAllFilesAccess(): Boolean = Environment.isExternalStorageManager()
-
-    /** مدير التخزين لمراقبة تركيب/فصل الوسائط؛ null إن لم يتوفر. */
-    fun storageManager(): StorageManager? =
-        runCatching { context.getSystemService(StorageManager::class.java) }.getOrNull()
-
-    /** موضع البداية: جذر الوحدة الأساسية مع الصلاحية، وإلا تخزين التطبيق (وضع محدود). */
-    fun defaultLocation(): BrowserLocation =
-        if (hasAllFilesAccess()) BrowserLocation(primaryRoot().path)
-        else BrowserLocation(context.filesDir.toPath())
-
-    fun appStorage(): BrowserLocation = BrowserLocation(context.filesDir.toPath())
 
     /**
      * وحدات التخزين التي ركّبها النظام فعلياً. الوسائط غير المركّبة لا تُدعم
@@ -82,31 +70,10 @@ class StorageRepository(private val context: Context) {
         runCatching { volume.getDescription(context) }.getOrNull()?.takeIf { it.isNotBlank() }
             ?: context.getString(if (volume.isRemovable) R.string.storage_removable else R.string.storage_internal)
 
-    /**
-     * Android/data وAndroid/obb محجوبتان نظامياً حتى مع الصلاحية الكاملة:
-     * نعرض سبباً واضحاً بدل استثناء غامض، ولا نحاول التحايل.
-     */
-    fun blockedReason(path: Path): String? {
-        val absolute = path.toAbsolutePath().normalize().toString()
-        // Only the system-controlled Android/{data,obb} directly under a volume root
-        return if (SYSTEM_BLOCKED.containsMatchIn(absolute)) context.getString(R.string.storage_blocked_reason) else null
-    }
-
-    private val SYSTEM_BLOCKED = Regex("^(/storage/[^/]+|/storage/self/primary|/sdcard|/mnt/sdcard|/data/media/\\d+)/Android/(data|obb)(/|$)")
-
-    /**
-     * قراءة المجلد بنداء خصائص واحد لكل عنصر (لا listFiles ثم length لكل ملف).
-     * (F-11/F-15) يعيد null عند تعذر التعداد (مجلد غير موجود/رفض وصول/I/O)
-     * تمييزاً عن قائمة فارغة حقيقية — كان getOrDefault(emptyList()) يجعل
-     * المجلد الفاشل يبدو فارغاً بصمت. القائمة لا تتبع الروابط الرمزية.
-     *
-     * (تحديث) runCatching كان يلتقط كل Throwable فيبتلع OutOfMemoryError
-     * (يظهر «مجلد غير مقروء» بدل سقوط واضح) — الآن IOException فقط؛ ما
-     * يتجاوز I/O يُرمى كما هو.
-     */
+    /** قراءة المجلد بنداء خصائص واحد لكل عنصر (لا listFiles ثم length لكل ملف). */
     fun list(location: BrowserLocation): List<FileEntry>? {
         val dir = location.path.toAbsolutePath().normalize()
-        // Missing or not a directory is a failure, not an empty folder (F-11)
+        // Missing or not a directory is a failure, not an empty folder 
         if (!Files.isDirectory(dir, LinkOption.NOFOLLOW_LINKS)) return null
         val entries = ArrayList<FileEntry>(256)
         try {
@@ -131,7 +98,7 @@ class StorageRepository(private val context: Context) {
                 }
             }
         } catch (e: java.io.IOException) {
-            return null // تعذر التعداد نفسه: يميَّز عن قائمة فارغة حقيقية (F-11)
+            return null // تعذر التعداد نفسه: يميَّز عن قائمة فارغة حقيقية 
         }
         return entries
     }
@@ -147,11 +114,6 @@ class StorageRepository(private val context: Context) {
         val normalizedParent = parent.toAbsolutePath().normalize()
         val target = normalizedParent.resolve(name).normalize()
         return target.takeIf { it.parent == normalizedParent && it.fileName.toString() == name }
-    }
-
-    fun createFolder(location: BrowserLocation, name: String): Boolean {
-        val target = safeChild(location.path, name) ?: return false
-        return runCatching { Files.createDirectory(target); true }.getOrDefault(false)
     }
 
     /** إنشاء ملف فارغ جديد: يفشل إن كان الاسم موجوداً — لا استبدال صامت. */
@@ -174,16 +136,6 @@ class StorageRepository(private val context: Context) {
             false
         }
 
-        /**
-         * Placeholder (F15): `posix_fadvise(DONTNEED)` ليس في SDK العام، وJNI لأجله
-         * وحده لا يبرر كلفة صيانة كود أصلي هنا. القيد المترتب على ذلك بوضوح:
-         * إعادة قراءة الوجهة في [AtomicIO.moveVerified] (تحقق SHA-256) قد تأتي
-         * من page cache لا من الوسيط، فالتحقق يظل قائماً على ما كُتب فعلاً
-         * في مسار النواة لكنه ليس دليلاً فيزيائياً على الوصول للقرص — الدليل
-         * الفيزيائي هو `fsync` (FileChannel.force) في [AtomicIO] نفسه قبل النشر.
-         * لا تعتمد على هذه الدالة كدليل مادي؛ تُترك فارغة عمداً بدل حذفها
-         * حتى يبقى موضع الاستدعاء جاهزاً إن أُتيح fadvise لاحقاً.
-         */
         fun dropPageCache(@Suppress("UNUSED_PARAMETER") file: Path) {
         }
     }

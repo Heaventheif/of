@@ -26,15 +26,6 @@ object FileKinds {
         register(FileKind.TEXT, "txt", "md", "log", "yml", "yaml", "ini", "conf", "properties", "sh")
     }
 
-    /**
-     * امتدادات تُفتح في المحرر النصي الداخلي (كانت TEXT_EXTENSIONS في MainActivity):
-     * نص وكود وجداول CSV فقط — لا مستندات doc الغنية ولا ملفات py/ts/c… كما كان.
-     */
-    private val EDITABLE_TEXT_EXTENSIONS = setOf(
-        "txt", "md", "json", "xml", "csv", "log", "kt", "java", "html", "css",
-        "js", "yml", "yaml", "ini", "conf", "properties", "sh"
-    )
-
     /** امتدادات لا يدعمها المستخرج فعلياً (rar/7z) فلا يُعرض لها أمر «استخراج». */
     private val UNEXTRACTABLE_EXTENSIONS = setOf("rar", "7z")
 
@@ -50,8 +41,6 @@ object FileKinds {
     /** أرشيف يظهر خيار استخراجه: أرشيف فعلاً وقابل للفك بمحرك الاستخراج الحالي. */
     fun isExtractableArchive(name: String): Boolean =
         isArchive(name) && extensionOf(name) !in UNEXTRACTABLE_EXTENSIONS
-
-    fun isEditableText(name: String): Boolean = extensionOf(name) in EDITABLE_TEXT_EXTENSIONS
 
     private fun extensionOf(name: String): String =
         name.substringAfterLast('.', "").lowercase()

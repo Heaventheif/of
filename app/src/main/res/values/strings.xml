@@ -4,7 +4,6 @@
     <string name="storage_internal">التخزين الداخلي</string>
     <string name="storage_removable">وحدة تخزين قابلة للإزالة</string>
     <string name="storage_app_limited">تخزين التطبيق (وضع محدود)</string>
-    <string name="storage_blocked_reason">مجلدات Android/data وAndroid/obb محجوبة نظامياً ولا يمكن الوصول إليها</string>
     <string name="op_kind_copy">نسخ</string>
     <string name="op_kind_move">نقل</string>
     <string name="op_kind_delete">حذف</string>
@@ -18,6 +17,8 @@
     <string name="archive_missing_parts">أجزاء ناقصة: %1$s</string>
     <string name="archive_unsafe_path">الأرشيف يحوي مساراً غير آمن فتم رفضه كله</string>
     <string name="archive_limits_exceeded">تجاوز الأرشيف حدود الحماية (حجم أو نسبة ضغط أو عدد عناصر)</string>
+    <string name="archive_err_too_many_entries">تجاوز الأرشيف حدّ عدد العناصر المسموح فتم رفضه</string>
+    <string name="archive_err_central_directory_too_large">تجاوز دليل الأرشيف المركزي حده المسموح فتعذّر فتحه بأمان</string>
     <string name="ui_settings_operations">العمليات</string>
     <string name="ui_settings_archive_limits">حدود استخراج مخفَّفة للضغط العالي</string>
     <string name="ui_settings_archive_limits_desc">اسمح بملفات مشروعة شديدة الانضغاط (صور أقراص مفرّغة، سجلات ضخمة) مع حماية أضعف من القنابل المضغوطة.</string>
@@ -39,8 +40,6 @@
     <string name="archive_preview_split_too_large">الأرشيف المقسم أكبر من حد المعاينة؛ الاستخراج الكامل متاح</string>
     <string name="file_ops_channel">عمليات الملفات</string>
     <string name="file_ops_channel_desc">تقدم النسخ والنقل والحذف والاستخراج</string>
-    <string name="file_ops_preparing">جارٍ تجهيز العملية…</string>
-    <string name="file_ops_conflict_notification">تعارض: %1$s — افتح التطبيق للقرار</string>
     <string name="file_ops_progress_line">%1$s: %2$d/%3$d — %4$s</string>
     <string name="file_ops_cancel">إلغاء</string>
     <string name="op_result_completed">اكتملت</string>
@@ -57,13 +56,8 @@
     <string name="op_not_started_after_fatal">لم تبدأ العملية؛ أُوقفت الخدمة بعد خطأ قاتل سابق — أعد المحاولة بعد إعادة تشغيل التطبيق</string>
     <string name="op_decode_failed">تعذّر بدء العملية — طلب غير صالح</string>
     <string name="op_fatal_journal">انقطعت بخطأ قاتل: %1$s</string>
-    <string name="music_play">تشغيل</string>
-    <string name="music_pause">إيقاف مؤقت</string>
-    <string name="music_prev">السابق</string>
-    <string name="music_next">التالي</string>
     <string name="music_channel">مشغل الموسيقى</string>
     <string name="music_channel_desc">تحكم التشغيل وتقدمه</string>
-    <string name="music_notification_playing">تشغيل…</string>
     <string name="music_error_all_failed">لا يمكن تشغيل أي مقطع في القائمة</string>
     <string name="music_error_skipping">تعذر تشغيل %1$s، انتقل للتالي</string>
     <string name="archive_space_unreadable">تعذر تحديد المساحة المتاحة للاستخراج</string>
@@ -82,4 +76,50 @@
     <string name="ui_err_install_failed">تعذر بدء تثبيت التطبيق</string>
     <string name="ui_perm_limited">متابعة بوصول محدود</string>
     <string name="ui_perm_limited_hint">يمكنك استخدام التطبيق الآن على تخزين التطبيق فقط، ومنح الوصول الشامل لاحقاً من الإعدادات</string>
+
+    <!-- (Refactor) CoreOpCode mappings: كانت نصوصاً عربية مضمّنة في :core،
+         نقلت إلى strings.xml لتُترجم لاحقاً ودون لمس المحرك. -->
+    <string name="core_op_cancelled">أُلغيت</string>
+    <string name="core_op_failed">فشلت العملية</string>
+    <string name="core_archive_created">أُنشئ الأرشيف</string>
+    <string name="core_extracted">استُخرج %1$d عنصراً</string>
+    <string name="core_delete_failed">تعذر الحذف</string>
+    <string name="core_transfer_failed">تعذر النقل</string>
+    <string name="core_copy_failed">تعذر نسخ الملف</string>
+    <string name="core_compress_failed">فشل الضغط</string>
+    <string name="core_extract_failed">فشل الاستخراج</string>
+    <string name="core_resume_failed">فشلت الاستئناف</string>
+    <string name="core_part_read_failed">تعذر قراءة الجزء: %1$s</string>
+    <string name="core_merge_sub_failed">تعذر نقل %1$d عنصراً أثناء الدمج</string>
+    <string name="core_destination_exists">الوجهة موجودة</string>
+    <string name="core_destination_is_file">الوجهة ملف موجود</string>
+    <string name="core_destination_exists_restored">الوجهة موجودة؛ أُعيد الاسم الأصلي</string>
+    <string name="core_source_missing">المصدر غير موجود</string>
+    <string name="core_no_operation">لا توجد عملية بهذا المعرف: %1$s</string>
+    <string name="core_not_rename_op">ليست عملية تسمية</string>
+    <string name="core_op_interrupted">انقطعت بموت العملية</string>
+    <string name="core_op_already_finished">العملية منتهية أصلاً فلا تُستأنف</string>
+    <string name="core_op_empty">العملية فارغة: %1$s</string>
+    <string name="core_rename_recovered_by_engine">التسمية تُستردّ من محرّكها الخاص</string>
+    <string name="core_no_items">لا توجد عناصر للضغط</string>
+    <string name="core_no_valid_files">لا توجد ملفات صالحة للضغط</string>
+    <string name="core_split_corrupt">أجزاء ناقصة أو غير مقسم: %1$s</string>
+    <string name="core_split_too_large">حجم الأجزاء يتجاوز المساحة المتاحة</string>
+    <string name="core_same_path">المصدر والوجهة نفس العنصر</string>
+    <string name="core_same_file">المصدر والوجهة نفس الملف</string>
+    <string name="core_skip_group">تخطي المجموعة</string>
+    <string name="core_no_extract_log">لا سجل عملية استخراج مطابق والوجهة موجودة</string>
+    <string name="core_dest_exists_incomplete">الوجهة موجودة والعملية غير مكتملة</string>
+    <string name="core_finished_dest_missing">العملية منتهية والوجهة غائبة</string>
+    <string name="core_both_missing">الأصل والنسخة الاحتياطية كلاهما غائب</string>
+    <string name="core_backup_preserved">النسخة الاحتياطية محفوظة</string>
+    <string name="core_recovery_summary">استرداد التسمية: أكمل %1$d، أعاد %2$d</string>
+    <string name="core_undo_summary">إلغاء التسمية: أعاد %1$d لاسمه الأصلي</string>
+    <string name="core_symlink">رابط رمزي</string>
+    <string name="core_dest_inside_source">الوجهة داخل المصدر نفسه: %1$s</string>
+    <string name="core_kind_copy">نسخ</string>
+    <string name="core_kind_move">نقل</string>
+    <string name="core_kind_delete">حذف</string>
+    <string name="core_kind_operation">عملية</string>
+    <string name="core_op_summary">%1$s: %2$d ناجح، %3$d فاشل، %4$d متخطى</string>
 </resources>

@@ -1,7 +1,6 @@
 package org.openfilemanager.app
 
 import android.app.Notification
-import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
 import android.content.Context
@@ -83,26 +82,13 @@ class MutableSharedFlowSafe<T>(private val capacity: Int = 8) {
         synchronized(listeners) { listeners.toList() }.forEach { it(value) }
     }
 
-    fun subscribe(listener: (T) -> Unit): () -> Unit {
-        synchronized(listeners) { listeners += listener }
-        return { synchronized(listeners) { listeners -= listener } }
-    }
 }
 
-/**
- * خدمة تشغيل الموسيقى على **Media3**: ExoPlayer وحيد يعيش هنا ويُحرَّر في
- * onDestroy، تركيز الصوت وWAKE_MODE_LOCAL والعودة عند انقطاع السماعات
- * يديرها ExoPlayer نفسه، وMediaSession (media3) لأزرار السماعة وشاشة القفل مع بيانات
- * المقطع (عنوان/فنان/ألبوم/غلاف من MediaMetadataRetriever داخل use{}).
- *
- * الواجهة تتصل بأوامر startService كما هي (المشغل لا يغادر الخدمة أبداً)، والإشعار
- * ثابت وأدنى أهمية بلا أزرار (التحكم من لوحة النظام)؛ الجلسة نفسها لا تنشر إشعاراً لأن الخدمة ليست MediaSessionService
- * — التشغيل يبدأ من واجهة ظاهرة فقط (قيود تركيز الصوت في أندرويد 16).
- */
+/** خدمة تشغيل الموسيقى على **Media3**. */
 class MusicPlaybackService : Service() {
 
     override fun attachBaseContext(newBase: android.content.Context) {
-        super.attachBaseContext(LanguageManager.wrap(newBase))
+        super.attachBaseContext(newBase.applyLanguage())
     }
 
     private var player: ExoPlayer? = null
@@ -156,28 +142,19 @@ class MusicPlaybackService : Service() {
         PlayerBus.lyrics.value = null
     }
 
-    /**
-     * إزالة التطبيق من التطبيقات الأخيرة: (تصحيح F20-استعادة) يُبقَى المشغل ما
-     * دامت قائمة تشغيل محملة — قتل الخدمة عند الإيقاف المؤقت كان يجعل إشعار
-     * الوسائط وزر التشغيل ميتين بعد تبديل التطبيقات أو مرور وقت، فلا يمكن
-     * استئناف التشغيل (وهذا هو السلوك المعياري لتطبيقات الوسائط في أندرويد).
-     * أمان إضافي الآن من الدفعة الثانية: علم running + مزامنة ON_RESUME في
-     * الواجهة تمسح أي حالة قديمة إن قتل النظام الخدمة فعلاً.
-     * الإيقاف مع قائمة فارغة (لا شيء للاستئناف) يوقف الخدمة.
-     */
     override fun onTaskRemoved(rootIntent: Intent?) {
         if (playlist.isEmpty()) { clearBus(); stopSelf() }
         super.onTaskRemoved(rootIntent)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        // (تصحيح) لا نترك الاستثناء يُسقط الخدمة؛ ويُسجَّل السبب للتشخيص.
+        // لا نترك الاستثناء يُسقط الخدمة؛ ويُسجَّل السبب للتشخيص.
         try {
             startForeground(NOTIFICATION_ID, buildNotification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
         } catch (e: Exception) {
             AppLog.e("music", "تعذّر بدء الخدمة الأمامية: ${e.javaClass.simpleName}")
         }
-        // (تصحيح) أمر تحكم وصل لخدمة بلا قائمة تشغيل (أُعيد إنشاؤها بعد أن أنهاها النظام
+        // أمر تحكم وصل لخدمة بلا قائمة تشغيل (أُعيد إنشاؤها بعد أن أنهاها النظام
         // أو بعد مقاطعة طويلة): كانت تبقى حيّة بلا مشغل فتبدو أزرار المشغل المصغر ميتة.
         // نُنهيها ونُخفي المشغل بدل ذلك.
         if (intent?.action != ACTION_START && playlist.isEmpty()) {
@@ -242,7 +219,7 @@ class MusicPlaybackService : Service() {
             }
         }
 
-        // (تصحيح) مقاطعة من تطبيق آخر (فقد تركيز الصوت) تغيّر playWhenReady/السبب قبل أن
+        // مقاطعة من تطبيق آخر (فقد تركيز الصوت) تغيّر playWhenReady/السبب قبل أن
         // يتغيّر isPlaying — ننشر الحالة فوراً كي لا يبقى زر المشغل المصغر على حالة قديمة.
         override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
             publish()
@@ -335,11 +312,7 @@ class MusicPlaybackService : Service() {
                 .setAlbumTitle(tags.album ?: "")
                 .apply { tags.artwork?.let { setArtworkData(it, MediaMetadata.PICTURE_TYPE_FRONT_COVER) } }
                 .build()
-            // القائمة كاملة للمشغل مع بداية عند المقطع الحالي (8.4): أزرار
-            // السماعة وشاشة القفل (SEEK_TO_NEXT/PREVIOUS عبر MediaSession) لا
-            // تعمل مع عنصر وحيد. الانتقال بين المقاطع يظل بمنطقنا (next/previous/
-            // advance مع الالتفاف والتكرار والعشوائية) — يُعاد تقديم القائمة عند
-            // كل فتح فيبقى موضع البدء صحيحاً.
+            // القائمة كاملة للمشغل مع بداية عند المقطع الحالي (8.4): أزرار السماعة وشاشة القفل (SEEK_TO_NEXT/PREVIOUS عبر MediaSession) لا تعمل مع عنصر وحيد.
             val items = playlist.map { item ->
                 MediaItem.Builder().setUri(playbackUriOf(item).toUri()).build()
             }
@@ -358,21 +331,11 @@ class MusicPlaybackService : Service() {
         }
     }
 
-    /**
-     * (F-03) أصل التشغيل منفصل عن مصدر الوسوم ومسار الكلمات الجانبية: مسار
-     * مطلق يُحوّل إلى file:// ليقرأه ExoPlayer، وfile:// وcontent:// تبقى كما
-     * هي. الوسوم والكلمات تمر عبر [localPathOf] و[readTags] لا عبر مسار نصي واحد
-     * يُلصق في كل المستهلكين.
-     */
+    /** أصل التشغيل منفصل عن مصدر الوسوم ومسار الكلمات الجانبية: مسار مطلق يُحوّل إلى file:// ليقرأه ExoPlayer، وfile:// وcontent:// تبقى كما هي. */
     private fun playbackUriOf(entry: String): String =
         if (entry.startsWith("/")) android.net.Uri.fromFile(File(entry)).toString() else entry
 
-    /**
-     * (F-03) المسار المحلي الحقيقي لعنصر القائمة إن وُجد: مسار مطلق أو file://
-     * مباشرة، ومحتوى content:// عبر استعلام عمود DATA (MediaStore) لا تمرير نص
-     * content:// إلى File. null = لا مسار محلي معروف (كلمات LRC تبقى غير
-     * متاحة بدل فشل صامت في File).
-     */
+    /** المسار المحلي الحقيقي لعنصر القائمة إن وُجد. */
     private suspend fun localPathOf(entry: String): String? = withContext(AppDispatchers.io) {
         runCatching {
             when {
@@ -386,7 +349,7 @@ class MusicPlaybackService : Service() {
         }.getOrNull()
     }
 
-    /** MediaMetadataRetriever داخل use{} على خيط IO: مسار محلي عبر المسار، ومحتوى content:// عبر setDataSource(Context, Uri) (F-03). */
+    /** MediaMetadataRetriever داخل use{} على خيط IO: مسار محلي عبر المسار، ومحتوى content:// عبر setDataSource(Context, Uri) . */
     private suspend fun readTags(entry: String?): TrackTags = withContext(AppDispatchers.io) {
         if (entry == null) return@withContext TrackTags()
         val local = localPathOf(entry)
@@ -418,7 +381,7 @@ class MusicPlaybackService : Service() {
     }.getOrDefault(TrackTags())
 
     /** كلمات من ملف .lrc بنفس اسم المقطع بجواره؛ متزامنة إن وُجدت أطوار زمنية وإلا نص عادي.
-     *  (F-03) تُقرأ فقط عند توفر مسار محلي حقيقي — نص content:// لا يمر إلى File أبداً. */
+     *  تُقرأ فقط عند توفر مسار محلي حقيقي — نص content:// لا يمر إلى File أبداً. */
     private suspend fun readLyrics(entry: String?): List<LyricLine>? = withContext(AppDispatchers.io) {
         val path = entry?.let { localPathOf(it) } ?: return@withContext null
         runCatching {
@@ -471,7 +434,7 @@ class MusicPlaybackService : Service() {
     }.getOrNull()
 
     /**
-     * (تصحيح) استئناف التشغيل بعد مقاطعة (تطبيق آخر أخذ تركيز الصوت أو غياب طويل):
+     * استئناف التشغيل بعد مقاطعة (تطبيق آخر أخذ تركيز الصوت أو غياب طويل):
      * المشغل قد يكون في IDLE (بعد خطأ/تحرير الموارد) أو ENDED أو بلا عناصر، وplay()
      * وحدها لا تفعل شيئاً في هذه الحالات فيبدو الزر ميتاً. نُعيد تجهيزه قبل التشغيل.
      */
@@ -488,9 +451,6 @@ class MusicPlaybackService : Service() {
         }
         p.play()
         publish()
-        // (تصحيح F20-استعادة) تحقق وإعادة محاولة: طلب التشغيل بعد فقدان تركيز
-        // الصوت قد يُرفض صامتاً فيبقى الزر يبدو ميتاً. بعد مهلة قصيرة إن لم يبدأ
-        // التشغيل فعلاً نعيد المحاولة مرة ونحدّث الإشعار.
         scope.launch {
             delay(700)
             if (!p.isPlaying && p.playWhenReady &&
@@ -574,15 +534,10 @@ class MusicPlaybackService : Service() {
      * (بلا صوت ولا أزرار ولا تحديثات). التحكم يتم من لوحة النظام عبر MediaSession.
      */
     private fun createChannel() {
-        notifications.deleteNotificationChannel(OLD_CHANNEL_ID)
-        notifications.deleteNotificationChannel(OLD_SILENT_CHANNEL_ID)
-        notifications.createNotificationChannel(
-            NotificationChannel(CHANNEL_ID, getString(R.string.music_channel), NotificationManager.IMPORTANCE_LOW).apply {
-                description = getString(R.string.music_channel_desc)
-                setShowBadge(false)
-                setSound(null, null)
-                enableVibration(false)
-            }
+        // استخدام NotificationChannels.ensure الموحّد بدل تكرار البناء.
+        NotificationChannels.ensure(
+            this, CHANNEL_ID, getString(R.string.music_channel), getString(R.string.music_channel_desc),
+            NotificationManager.IMPORTANCE_LOW, OLD_CHANNEL_ID, OLD_SILENT_CHANNEL_ID
         )
     }
 
@@ -645,7 +600,7 @@ class MusicPlaybackService : Service() {
         const val ACTION_SYNC = "org.openfilemanager.app.music.SYNC"
 
         /**
-         * (تصحيح) هل الخدمة حيّة فعلاً. PlayerBus يعيش في العملية فقد تبقى فيه حالة قديمة
+         * هل الخدمة حيّة فعلاً. PlayerBus يعيش في العملية فقد تبقى فيه حالة قديمة
          * بعد أن تموت الخدمة؛ الواجهة تتحقق من هذا قبل أن تعرض المشغل المصغر أو ترسل أمراً.
          */
         @Volatile

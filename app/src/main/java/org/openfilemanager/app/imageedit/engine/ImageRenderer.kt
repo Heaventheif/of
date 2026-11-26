@@ -19,7 +19,6 @@ import android.text.TextPaint
 import org.openfilemanager.app.imageedit.model.BrushStyle
 import org.openfilemanager.app.imageedit.model.EditLayer
 import org.openfilemanager.app.imageedit.model.ShapeKind
-import org.openfilemanager.app.imageedit.model.EditorFontFamily
 import org.openfilemanager.app.imageedit.model.TextAlignment
 import org.openfilemanager.core.imageedit.Adjust
 import org.openfilemanager.core.imageedit.Affine2
@@ -32,13 +31,7 @@ import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.sin
 
-/**
- * محرّك العرض: يرسم الصورة الأساس مع حالة التحويل (قصّ/تدوير/قلب) وكل الطبقات
- * في تمريرة واحدة. نفس الكود يُستخدم للمعاينة (على بت ماب مصغّرة) وللتصدير
- * (على قرار كامل) — فرق المقياس فقط عبر [docScale].
- *
- * الأصل لا يُعدَّل أبداً: التحويل حالة تُطبَّق عند الرسم فقط.
- */
+/** محرّك العرض: يرسم الصورة الأساس مع حالة التحويل (قصّ/تدوير/قلب) وكل الطبقات في تمريرة واحدة. */
 object ImageRenderer {
 
     private const val TEXT_PADDING = 0.25f // نسبة الحشو حول النص من حجمه
@@ -68,13 +61,7 @@ object ImageRenderer {
     // ---------------------------------------------------------------------
     // الرسم
 
-    /**
-     * رسم الحالة كاملة على بت ماب جديدة.
-     * @param base بت ماب الصورة الأصلية المعترضة (معاينة أو قرار كامل).
-     * @param docScale بكسل المخرَج لكل وحدة مستند (preview: < 1، تصدير: 1).
-     * @param adjust تعديلات الصورة الأساس (الإضاءة/الألوان/الفلاتر) — تُطبَّق كمصفوفة ألوان
-     *  عند الرسم فلا تُعدَّل البكسلات؛ التظليل الحوافي تدرّج يُرسم فوق الصورة قبل الطبقات.
-     */
+    /** رسم الحالة كاملة على بت ماب جديدة. */
     fun render(
         base: Bitmap,
         transform: ImageTransform,
@@ -144,16 +131,7 @@ object ImageRenderer {
         canvas.drawRect(0f, 0f, w.toFloat(), h.toFloat(), paint)
     }
 
-    /**
-     * (تصحيح) ترتيب التركيب. `a.then(b)` في [Affine2] يعني «طبّق a أولاً ثم b».
-     * الشيفرة القديمة كانت تكتب السلاسل بترتيب ضرب المصفوفات (الأخير يُطبَّق أولاً)،
-     * فكانت الصور والنصوص والأشكال تُرسم في مكان خاطئ أو تختفي عند التدوير، وتنفصل
-     * عن إطار التحكم الذي كان محسوباً بشكل صحيح.
-     *
-     * يضع محتوى الطبقة ([inner]: إحداثيات محلية مركزها الأصل) حول مركزها بحيث يُحوَّل
-     * المركز بالتحويل الكامل (يشمل القلب) بينما يبقى اتجاه المحتوى معتدلاً (بلا قلب)
-     * كي لا تنعكس الحروف والصور المضافة.
-     */
+    /** ترتيب التركيب. `a.then(b)` في [Affine2] يعني «طبّق a أولاً ثم b». */
     private fun uprightPlacement(
         inner: Affine2, full: Affine2, upright: Affine2, cx: Float, cy: Float
     ): Affine2 {
@@ -227,13 +205,7 @@ object ImageRenderer {
             .build()
     }
 
-    /**
-     * (تصحيح) بناء تخطيط النص. السبب الجذري لاختفاء النصوص: كان التخطيط يُبنى بعرض
-     * عريض جداً (حجم الخط × 40) مع محاذاة وسط/نهاية، بينما يُرسم الصندوق بعرض أضيق
-     * هو عرض أطول سطر — فيُزاح النص (وكل النص العربي الذي يُحاذى لليمين تلقائياً)
-     * خارج الصورة. الآن نقيس أطول سطر ضمن العرض الأقصى ثم نعيد البناء بعرض الصندوق
-     * الفعلي، فتقع المحاذاة داخل الصندوق.
-     */
+    /** بناء تخطيط النص. السبب الجذري لاختفاء النصوص. */
     fun textLayout(
         layer: EditLayer.Text,
         maxDocWidth: Float,
@@ -293,12 +265,7 @@ object ImageRenderer {
         canvas.restore()
     }
 
-    /**
-     * ضربة فرشاة. لكل نمط هيئته:
-     * - PEN: خط حاد بلون كامل.
-     * - MARKER: خط عريض شبه شفاف كالفلوماستر.
-     * - NEON: توهّج مموّه عريض تحت خط داخلي فاتح.
-     */
+    /** ضربة فرشاة. لكل نمط هيئته: - PEN: خط حاد بلون كامل. */
     private fun drawStrokeLayer(canvas: Canvas, layer: EditLayer.Stroke, m: Affine2) {
         val width = layer.widthPx * m.meanScale
         if (layer.points.size == 1) {
@@ -417,7 +384,7 @@ object ImageRenderer {
     }
 
     private fun drawShapeLayer(canvas: Canvas, layer: EditLayer.Shape, full: Affine2, upright: Affine2) {
-        // (تصحيح) الهندسة تُرسم بإحداثيات المستند تحت مصفوفة (تدوير الطبقة حول مركزها
+        // الهندسة تُرسم بإحداثيات المستند تحت مصفوفة (تدوير الطبقة حول مركزها
         // ثم التحويل الكامل) — فيدور الشكل كاملاً ويتحجم سمك خطه مع الصورة، وكان
         // الشكل سابقاً يُرسم كصندوق محوري ويختفي أو ينزاح.
         val rot = Affine2.translation(-layer.centerX, -layer.centerY)

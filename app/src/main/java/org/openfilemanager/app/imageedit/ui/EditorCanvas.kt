@@ -11,7 +11,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
@@ -48,8 +47,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.IntSize
 import org.openfilemanager.app.R
 import org.openfilemanager.app.imageedit.EditorCanvasController
-import org.openfilemanager.app.imageedit.ImageEditorViewModel.EditorUiState
-import org.openfilemanager.app.imageedit.ImageEditorViewModel.LiveCut
+import org.openfilemanager.app.imageedit.EditorUiState
+import org.openfilemanager.app.imageedit.LiveCut
 import org.openfilemanager.app.imageedit.model.CutMode
 import org.openfilemanager.core.imageedit.CutShape
 import org.openfilemanager.app.imageedit.engine.ImageRenderer
@@ -65,17 +64,7 @@ import kotlin.math.hypot
 import kotlin.math.min
 import kotlin.math.roundToInt
 
-/**
- * قماش المحرّر: يعرض المعاينة المرسومة (وتشمل الطبقات) مع إطار التحديد
- * ومقابض التحجيم/التدوير وواجهة القصّ، ويحوّل كل الإيماءات إلى إحداثيات
- * المستند قبل تمريرها للمتحكم — فلا تعرف الواجهة شيئاً عن دقة الشاشة.
- *
- * الإيماءات: قرصة = تكبير/تحريك؛ إصبع واحد = حسب الأداة (رسم/سحب/قصّ/تحديد)،
- * أو تحريك اللوحة عند التكبير، ولمسة قصيرة = تحديد.
- *
- * في أداة القصّ يُرسم فوق الصورة تراكب حيّ: تعتيم المنطقة التي ستُزال أثناء رسم
- * الحدّ، ومؤشّر فرشاة بمقدار سماكتها الحقيقية للممحاة/الاستعادة/الموزاييك.
- */
+/** قماش المحرّر: يعرض المعاينة المرسومة (وتشمل الطبقات) مع إطار التحديد ومقابض التحجيم/التدوير وواجهة القصّ، ويحوّل كل الإيماءات إلى إحداثيات المستند. */
 @Composable
 fun EditorCanvas(
     state: EditorUiState,
@@ -150,7 +139,7 @@ fun EditorCanvas(
                             }
                         }
                         else -> {
-                            // (تصحيح) التحديد والتحريك يخصان طبقات الأداة الحالية فقط
+                            // التحديد والتحريك يخصان طبقات الأداة الحالية فقط
                             val sel = s.selected?.takeIf { it.isInteractiveWith(s.tool) }
                             if (sel != null && sel !is EditLayer.Stroke) {
                                 val handles = g0.layerHandles(sel)
@@ -200,11 +189,6 @@ fun EditorCanvas(
                         if (!gestureStarted) { gestureStarted = true; controller.beginGesture() }
                     }
 
-                    // (تصحيح F15-استعادة) إغلاق الوضع النشط أينما انتهى: هبوط إصبع ثانٍ
-                    // كان يبدّل mode إلى ModePinch نهائياً فلا يُستدعى
-                    // onStrokeFinish/onShapeDragFinish/endGesture — الضربة
-                    // تُهمل، وendGesture المفقود يترك gestureRecording عالقاً
-                    // فيتعطل التاريخ (التراجع) كله حتى إعادة فتح المحرّر.
                     fun finishActiveMode() {
                         when (mode) {
                             ModeDraw -> if (strokeStarted) controller.onStrokeFinish()
@@ -233,8 +217,6 @@ fun EditorCanvas(
                         val event = awaitPointerEvent()
                         val pressed = event.changes.filter { it.pressed }
                         if (pressed.size >= 2) {
-                            // (تصحيح F15-استعادة) إن كان وضع تحرير جارياً فأغلقه أولاً
-                            // (تسجيل الضربة/الشكل/إغلاق إدخال التاريخ) ثم قرصة.
                             if (mode != ModePinch) {
                                 finishActiveMode()
                                 mode = ModePinch
@@ -257,7 +239,7 @@ fun EditorCanvas(
                         val change = event.changes.firstOrNull { it.id == down.id } ?: event.changes.firstOrNull()
                             ?: break
                         val released = !change.pressed
-                        // (تحسين) رفع آخر إصبع يُعالَج كآخر نقطة لا يُهمل: لمسة بلا سحب في وضع
+                        // رفع آخر إصبع يُعالَج كآخر نقطة لا يُهمل: لمسة بلا سحب في وضع
                         // الرسم/الفرشاة ترسم نقطة، وتُغلق الأوضاع المستمرة على موضع الرفع.
                         // وضع القرصة وحده ينتهي فور رفع آخر إصبع (لا نقطة له عند الرفع).
                         if (released && pressed.isEmpty() && mode == ModePinch) break
@@ -373,7 +355,6 @@ fun EditorCanvas(
                         if (released) break
                     }
 
-                    // ---- نهاية الإيماءة (تصحيح F15-استعادة: نفس مسار الإغلاق الموحد)
                     finishActiveMode()
                     val isTap = !moved && mode != ModePinch && mode != ModeDraw && mode != ModeErase && mode != ModeLasso &&
                         mode != ModeShapeDraw && !cropStarted
@@ -393,7 +374,7 @@ fun EditorCanvas(
         Canvas(Modifier.fillMaxSize()) {
             drawEditorFrame(drawPreview, liveState, cropRect, liveCut, ::geom)
         }
-        // (تحسين) التحكم بالتكبير: كان التكبير بالقرصة بلا طريقة للعودة إلى الملاءمة
+        // التحكم بالتكبير: كان التكبير بالقرصة بلا طريقة للعودة إلى الملاءمة
         ZoomControls(
             zoom = zoom,
             panned = pan != Offset.Zero,

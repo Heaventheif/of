@@ -1,7 +1,6 @@
 package org.openfilemanager.app
 
 import android.app.Notification
-import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
 import android.content.Context
@@ -16,6 +15,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import org.openfilemanager.core.ConflictDecision
 import org.openfilemanager.core.ConflictPolicy
@@ -29,14 +29,8 @@ import org.openfilemanager.core.OpState
 import org.openfilemanager.core.OperationCancelledException
 import org.openfilemanager.core.TargetInsideSourceException
 import java.io.File
-import java.nio.charset.Charset
 import java.nio.file.Path
-import java.nio.file.Paths
-import java.nio.file.Files
-import java.nio.file.LinkOption
-import java.util.UUID
 import java.util.concurrent.atomic.AtomicInteger
-import org.openfilemanager.core.EntryFilter
 
 /** طلب عملية تُرسل إلى الخدمة. المسارات نصوص عبر Intent (Path ليس Parcelable).
  *  كل طلب يحمل معرّفه (opId) — يولّده المرسل فيعرفه، وتربط الواجهة
@@ -85,19 +79,11 @@ sealed interface OpRequest {
     ) : OpRequest
 }
 
-/**
- * خدمة العمليات الطويلة:
- * - أمامية من نوع dataSync، تبدأ من واجهة ظاهرة فقط (قيود بدء الخدمات في 15+).
- * - معالجة تسلسلية (عملية كتابة واحدة في وقتها؛ يحقق «عملية واحدة لكل وحدة» بدراجة أمان).
- * - إشعار تقدم يُختزل إلى مرة كل 500 مللي ثانية، وزر إلغاء فوري (فحص كل دفعة).
- * - التعارض يعلّق المحرك على CompletableDeferred وتُكمله الواجهة عبر [OpsCenter].
- * - onTimeout (مهلة dataSync ~6 ساعات في 15+): إيقاف آمن وتعليم السجل INTERRUPTED للاستئناف.
- * - كل عملية تُسجَّل في [OpJournal] فتُستأنف بعد موت العملية.
- */
+/** خدمة العمليات الطويلة: - أمامية من نوع dataSync، تبدأ من واجهة ظاهرة فقط (قيود بدء الخدمات في 15+). */
 class FileOperationService : Service() {
 
     override fun attachBaseContext(newBase: android.content.Context) {
-        super.attachBaseContext(LanguageManager.wrap(newBase))
+        super.attachBaseContext(newBase.applyLanguage())
     }
 
     private val scope = CoroutineScope(SupervisorJob() + AppDispatchers.io)
@@ -106,7 +92,7 @@ class FileOperationService : Service() {
     private val opsCenter by lazy { appContainer.opsCenter }
 
     /**
-     * [0.7.9] مدخل الطابور: نية من onStartCommand أو طلب مُسترد مباشرة.
+     * مدخل الطابور: نية من onStartCommand أو طلب مُسترد مباشرة.
      * الطلب المسترد لا يمر عبر Intent (OpRequest ليس Parcelable) ولا عبر
      * startForegroundService (الخدمة أمامية أصلاً) — يدخل القناة كما هو.
      */
@@ -143,29 +129,19 @@ class FileOperationService : Service() {
     @Volatile
     private var lastStartId = 0
 
-    /**
-     * [0.7.9] محرك الضغط/الاستخراج فوق عقد OpJournal (كان المساران يدويين
-     * بسجل ناقص). مفرد في الحاوية — حدود الاستخراج تُحسب من مساحة الوجهة
-     * كما في ArchiveService.spaceBoundLimits.
-     */
-    private val archiveEngine by lazy {
-        org.openfilemanager.core.ArchiveOpEngine(
-            journal = opsCenter.journal,
-            limitsFor = { targetDir -> spaceBoundLimits(java.io.File(targetDir.toString())) }
+    private val archiveCoordinator by lazy {
+        ArchiveCoordinator(
+            opsCenter = opsCenter,
+            relaxedLimits = { appContainer.settings.archiveRelaxedLimits },
+            unreadableSpaceMessage = { getString(R.string.archive_space_unreadable) },
+            timedOut = { timedOut },
+            setLabel = { currentLabel = it },
+            onProgress = ::onProgress,
+            resolveConflict = ::askConflict,
+            text = { res -> getString(res) },
+            textArg = { res, arg -> getString(res, arg) },
+            pluralArg = { res, count, arg1, arg2 -> resources.getQuantityString(res, count, arg1, arg2) }
         )
-    }
-
-    /** [0.7.9] حدود الاستخراج المرتبطة بالمساحة المتاحة (نفس منطق ArchiveService). */
-    private fun spaceBoundLimits(destinationDir: java.io.File): org.openfilemanager.core.ExtractLimits {
-        var probe: java.io.File? = destinationDir
-        while (probe != null && !probe.exists()) probe = probe.parentFile
-        val usable = probe?.let { runCatching { it.usableSpace }.getOrNull() }
-        if (usable == null || usable <= 0L) {
-            throw org.openfilemanager.core.ArchiveLimitException(getString(R.string.archive_space_unreadable))
-        }
-        // (مراجعة 0.8.6-#3) سقف مخفَّف اختياري من الإعدادات، كما في ArchiveService.
-        return if (appContainer.settings.archiveRelaxedLimits) org.openfilemanager.core.ExtractLimits.relaxed(usable)
-        else org.openfilemanager.core.ExtractLimits(maxTotalBytes = usable)
     }
 
     override fun onCreate() {
@@ -175,11 +151,7 @@ class FileOperationService : Service() {
         createChannel()
         scope.launch {
             PendingRequestStore.purgeOlderThan(filesDir, STALE_PENDING_MS)
-            // [0.7.9] استرداد الطلبات المعلّقة من تشغيل سابق قبل بدء العامل:
-            // الخدمة تُدمّر عند قتل النظام/onTimeout والنظام لا يعيد تسليم
-            // النوايا (START_NOT_STICKY) فتضيع الطلبات غير المنفذة كلياً.
-            // المستردّ يُعاد إدخاله كأنه وصل الآن — إلا ما كان له سجل RUNNING/
-            // INTERRUPTED (يقرره حوار الاسترداد لا هذه المسارات الصامتة).
+            // استرداد الطلبات المعلّقة من تشغيل سابق قبل بدء العامل: الخدمة تُدمّر عند قتل النظام/onTimeout والنظام لا يعيد تسليم النوايا (START_NOT_STICKY) فتضيع…
             val recovered = runCatching {
                 PendingRequestStore.recoverActive(filesDir, opsCenter.journal, STALE_PENDING_MS)
             }.getOrDefault(emptyList())
@@ -218,10 +190,7 @@ class FileOperationService : Service() {
             // بطلب جديد (enqueue) تبقى العملية الملغاة ملغاة.
             opsCenter.requestStopOp(activeOpId)
             opsCenter.conflict.value?.deferred?.complete(ConflictDecision(ConflictPolicy.SKIP, false))
-            // الإلغاء لا يوقف الخدمة وفي طابورها عمل جارٍ: stopSelf(startId) هنا كانت
-            // تدمّرها فوراً (نية الإلغاء هي الأحدث) فيُقتل العامل في منتصف العملية
-            // وسجلها يبقى RUNNING. يُسجَّل startId ليبقى أحدث رقم معروفاً للعامل
-            // فيوقف الخدمة هو عند الفراغ؛ وإن لم يكن عمل فنوقفها هنا.
+            // الإلغاء لا يوقف الخدمة وفي طابورها عمل جارٍ: stopSelf(startId) هنا كانت تدمّرها فوراً (نية الإلغاء هي الأحدث) فيُقتل العامل في منتصف العملية وسجلها…
             synchronized(pendingLock) {
                 lastStartId = startId
                 if (pendingCount.get() == 0) stopSelf(startId)
@@ -243,14 +212,7 @@ class FileOperationService : Service() {
         return START_NOT_STICKY
     }
 
-    /**
-     * مهلة dataSync (أندرويد 15+): النظام يوجب توقف الخدمة بعدها قريباً —
-     * استمرار العامل بالطلب التالي في الطابور كان يخالف ذلك (4.2). المسار:
-     * 1) طلب إلغاء العملية الجارية (المحرك يفحصه عند الدفعة التالية ويعلّم
-     * سجلها INTERRUPTED)، 2) حلّ أي تعارض معلّق، 3) تصريف بقية الطابور كطلبات
-     * «لم تبدأ» (نتائج مهيكلة كفرع fatalStop وتبقى قابلة للاستئناف من سجلها)،
-     * 4) stopSelf فوراً.
-     */
+    /** مهلة dataSync (أندرويد 15+): النظام يوجب توقف الخدمة بعدها قريباً — استمرار العامل بالطلب التالي في الطابور كان يخالف ذلك (4.2). */
     override fun onTimeout(startId: Int, fgsType: Int) {
         timedOut = true
         opsCenter.requestStopOp(activeOpId)
@@ -268,7 +230,7 @@ class FileOperationService : Service() {
 
     private suspend fun worker() {
         for (entry in requests) {
-            // [0.7.9] الطلب المسترد يعبر decode نظرياً (نيته الأصلية استُهلكت
+            // الطلب المسترد يعبر decode نظرياً (نيته الأصلية استُهلكت
             // مع ملفها) — يُعاد بناؤه عند الاسترداد فيصبح جاهزاً هنا مباشرة.
             val request = when (entry) {
                 is QueueEntry.Recovered -> entry.request
@@ -287,7 +249,7 @@ class FileOperationService : Service() {
                         )
                     }
                 }
-                // [0.7.9] الطلب المسترد هنا فقدنيته الأصلية؛ يُمحى أثره المعلّق.
+                // الطلب المسترد هنا فقدنيته الأصلية؛ يُمحى أثره المعلّق.
                 if (request != null) {
                     runCatching { PendingRequestStore.clearActive(filesDir, opIdOf(request)) }
                     runCatching { PendingRequestStore.removePending(filesDir, opIdOf(request)) }
@@ -296,7 +258,7 @@ class FileOperationService : Service() {
                 continue
             }
             if (request == null) {
-                // [0.7.9] decode الفاشل كان يُسقط الطلب بصمت: لا نتيجة، لا سجل،
+                // decode الفاشل كان يُسقط الطلب بصمت: لا نتيجة، لا سجل،
                 // والواجهة تنتظر إلى الأبد. الآن: نتيجة نصية فاشلة + سجل معمّى.
                 runCatching {
                     val msg = getString(R.string.op_decode_failed)
@@ -328,10 +290,7 @@ class FileOperationService : Service() {
             } else {
                 runOp(request)
             }
-            // إيقاف آمن مدمج تحت القفل (4.1 / [0.7.9]): قراءة pendingCount و
-            // stopSelf(lastStartId) تحت القفل نفسه تمنع سباق «طلب جديد بعد
-            // decrement وقبل stopSelf» — نافذة كان يمكن أن تمر فيها نية محتجزة
-            // مع خدمة مدمرة. stopSelf سريع (<1ms) فلا يُحبس القفل طويلاً.
+            // إيقاف آمن مدمج تحت القفل: قراءة pendingCount و stopSelf(lastStartId) تحت القفل نفسه تمنع سباق «طلب جديد بعد decrement وقبل stopSelf» — نافذة كان يمكن…
             completeOne()
         }
     }
@@ -359,7 +318,6 @@ class FileOperationService : Service() {
         val opId = opIdOf(request)
         val journal: OpJournal = opsCenter.journal
         var wakeLock: android.os.PowerManager.WakeLock? = null
-        // يُنشأ عند أول استخدام: الضغط والاستخراج لا يحتاجانه (F18).
         val engine by lazy {
             FileOpEngine(
                 journal = journal,
@@ -372,14 +330,13 @@ class FileOperationService : Service() {
         }
         // All setup lives inside try/finally so cleanup always runs, even if init throws.
         try {
-            // (F-07) النسخة الاحتياطية موجودة أصلاً منذ holdAndRead عند decode
+            // النسخة الاحتياطية موجودة أصلاً منذ holdAndRead عند decode
             // (نقل ذري باسم opId)، وما عاد يُعاد كتابتها هنا — كانت بين الحذف
             // والكتابة نافذة فقد الطلب عند موت العملية. علامة «قيد التنفيذ» تُكتب الآن.
             PendingRequestStore.markActive(filesDir, opId)
             opsCenter.clearStopRequest(opId)
             opsCenter.markOpActive(opId)
             activeOpId = opId
-            // (F21) partial wake lock around the operation; released in finally.
             wakeLock = runCatching {
                 (getSystemService(Context.POWER_SERVICE) as? android.os.PowerManager)
                     ?.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "ofm:op:${opId}")
@@ -391,13 +348,13 @@ class FileOperationService : Service() {
             val policy = appSettings.conflictPolicy()
             when (request) {
                 is OpRequest.Compress -> {
-                    // [0.7.9] المحرك يعيد رسالة النتيجة مباشرة — بلا قناة
+                    // المحرك يعيد رسالة النتيجة مباشرة — بلا قناة
                     // lastArchiveMessage الجانبية بين الدالتين.
-                    val message = runCompress(request)
+                    val message = archiveCoordinator.runCompress(request)
                     return
                 }
                 is OpRequest.Extract -> {
-                    val message = runExtract(request, policy)
+                    val message = archiveCoordinator.runExtract(request, policy)
                     return
                 }
                 else -> {}
@@ -464,18 +421,17 @@ class FileOperationService : Service() {
             opsCenter.publishResult(message, opId, isError = true)
             publishAbortOutcome(request, opId, failed = 1, skipped = 0)
         } finally {
-            // [0.7.9] محو علامة التنفيذ والنسخة الاحتياطية: أي خاتمة (نجاح/فشل/
+            // محو علامة التنفيذ والنسخة الاحتياطية: أي خاتمة (نجاح/فشل/
             // إلغاء/خطأ قاتل) تنهي دورة حياة الطلب المعلّق فلا يُسترد مجدداً.
             runCatching { PendingRequestStore.clearActive(filesDir, opId) }
             runCatching { PendingRequestStore.removePending(filesDir, opId) }
-            // (F21) تحرير قفل الاستيقاظ دائماً، حتى بعد خطأ قاتل.
             runCatching { wakeLock?.takeIf { it.isHeld }?.release() }
             opsCenter.publishProgress(null)
             opsCenter.publishConflict(null)
             opsCenter.markOpFinished(opId)
             activeOpId = null
             currentLabel = ""
-            // (F-01) خاتمة العملية نقطة فحص طبيعية للانقطاع: عملية RUNNING في
+            // خاتمة العملية نقطة فحص طبيعية للانقطاع: عملية RUNNING في
             // السجل بعد موت سابق لم يُقرر بعد تظهر الآن، والانقطاع الحقيقي
             // لهذه العملية (خطأ قاتل/إيقاف) يُعلَّم ويُعرض.
             opsCenter.requestRecoveryCheck()
@@ -491,230 +447,6 @@ class FileOperationService : Service() {
         runCatching {
             opsCenter.publishOutcome(OpOutcome(opId, kindOf(request, opsCenter.journal), 0, failed, skipped))
         }
-    }
-
-    /**
-     * [0.7.9] الضغط عبر [ArchiveOpEngine] في :core: سجل كامل (عنصر لكل مصدر)
-     * بدل OpItemRecord واحد ناقص، والنتيجة تُنشر عبر publishResult/publishOutcome
-     * حصراً — lastArchiveMessage (قناة @Volatile بين دالتين في نفس الكوروتين)
-     * حُذفت. المؤقتات .fm-tmp-zip-* يغطيها منظف 3.3 كما قبل.
-     */
-    private suspend fun runCompress(request: OpRequest.Compress): String {
-        val opId = request.opId
-        val journal = opsCenter.journal
-        val destination = request.targetDir.resolve(request.targetName)
-        currentLabel = getString(R.string.op_kind_compress)
-        val stats = archiveEngine.compress(
-            sources = request.sources,
-            destination = destination,
-            opId = opId,
-            onProgress = { p ->
-                onProgress(
-                    FileOpProgress(
-                        itemIndex = p.entriesDone, itemCount = p.entriesTotal,
-                        bytesDone = p.bytesDone, bytesTotal = p.bytesTotal,
-                        current = destination.fileName.toString()
-                    )
-                )
-            },
-            isCancelled = { opsCenter.isStopRequested(opId) || opsCenter.queueCancelRequested || timedOut }
-        )
-        val message = if (stats.finalPath != null) {
-            getString(R.string.archive_created, BidiText.wrap(destination.fileName.toString()))
-        } else {
-            getString(R.string.archive_create_failed)
-        }
-        opsCenter.publishResult(message, opId)
-        opsCenter.publishOutcome(
-            OpOutcome(opId, OpKind.COMPRESS, stats.ok, stats.failed, stats.skipped)
-        )
-        return message
-    }
-
-    /**
-     * استخراج الأرشيف مع تطبيق سياسة التعارض نفسها التي تستخدمها عمليات النسخ والنقل.
-     * الاستبدال يحفظ الوجهة القديمة باسم احتياطي مؤقت ثم يستعيدها عند الفشل أو الإلغاء.
-     */
-    private suspend fun runExtract(request: OpRequest.Extract, configuredPolicy: ConflictPolicy): String {
-        val opId = request.opId
-        val archiveFile = request.archive.toFile()
-        currentLabel = getString(R.string.op_kind_extract)
-        if (request.selected != null && request.selected.isEmpty()) {
-            val message = getString(R.string.archive_no_items_selected)
-            opsCenter.publishResult(message, opId)
-            opsCenter.publishOutcome(OpOutcome(opId, OpKind.EXTRACT, 0, 0, 1))
-            return message
-        }
-
-        val splitCheck = org.openfilemanager.core.SplitZip.check(request.archive)
-        if (splitCheck is org.openfilemanager.core.SplitZipCheck.Incomplete) {
-            val message = getString(
-                R.string.archive_missing_parts,
-                splitCheck.missing.joinToString(getString(R.string.list_separator))
-            )
-            opsCenter.publishResult(message, opId)
-            opsCenter.publishOutcome(OpOutcome(opId, OpKind.EXTRACT, 0, 1, 0))
-            return message
-        }
-        val split = splitCheck is org.openfilemanager.core.SplitZipCheck.Split
-
-        val kind = org.openfilemanager.core.ArchiveFormat.detect(request.archive)
-        val singleFileOutput = kind == org.openfilemanager.core.ArchiveFormat.Kind.GZ ||
-            kind == org.openfilemanager.core.ArchiveFormat.Kind.XZ
-        val naturalName = if (singleFileOutput) {
-            org.openfilemanager.core.ArchiveFormat.singleFileName(archiveFile.name)
-        } else {
-            org.openfilemanager.core.ArchiveFormat.folderName(archiveFile.name)
-        }
-        val targetDir = request.targetDir
-        val naturalTarget = targetDir.resolve(naturalName)
-        var finalNameOverride: String? = null
-        var backupPath: Path? = null
-        var extractionSucceeded = false
-
-        if (!request.placeDirectly && Files.exists(naturalTarget, LinkOption.NOFOLLOW_LINKS)) {
-            val decision = when (configuredPolicy) {
-                ConflictPolicy.ASK -> askConflict(
-                    ConflictRequest(
-                        source = request.archive,
-                        target = naturalTarget,
-                        isDirectory = Files.isDirectory(naturalTarget, LinkOption.NOFOLLOW_LINKS)
-                    )
-                )
-                else -> ConflictDecision(configuredPolicy, false)
-            }
-            when (decision.policy) {
-                ConflictPolicy.SKIP, ConflictPolicy.ASK -> {
-                    val message = getString(R.string.archive_destination_skipped, BidiText.wrap(naturalName))
-                    opsCenter.publishResult(message, opId)
-                    opsCenter.publishOutcome(OpOutcome(opId, OpKind.EXTRACT, 0, 0, 1))
-                    return message
-                }
-                ConflictPolicy.KEEP_BOTH -> {
-                    finalNameOverride = uniqueArchiveOutputName(targetDir, naturalName, singleFileOutput)
-                }
-                ConflictPolicy.REPLACE -> if (request.selected != null &&
-                    Files.isDirectory(naturalTarget, LinkOption.NOFOLLOW_LINKS)
-                ) {
-                    // A partial extraction must never wipe an existing folder: replacing it
-                    // would delete every file that is not in the selected entries.
-                    finalNameOverride = uniqueArchiveOutputName(targetDir, naturalName, singleFileOutput)
-                } else {
-                    val backup = uniqueReplaceBackup(naturalTarget)
-                    // (المرحلة 2) تسجيل دائم قبل النقل: إن ماتت العملية بعد
-                    // إزاحة المجلد الأصلي يعرف استرداد الإقلاع أن هذه النسخة
-                    // بيانات مستخدم معلّقة — لا مؤقتاً يُجتاح مع `.fm-*`.
-                    opsCenter.replaceBackups.record(opId, naturalTarget, backup)
-                    backupPath = backup
-                    moveWithoutReplacement(naturalTarget, backup)
-                }
-            }
-        }
-
-        try {
-            val charset = runCatching { Charset.forName(request.charsetName) }.getOrDefault(Charsets.UTF_8)
-            val stats = archiveEngine.extract(
-                archive = request.archive,
-                targetDir = targetDir,
-                charset = charset,
-                opId = opId,
-                split = split,
-                onProgress = { entries, bytes ->
-                    onProgress(
-                        FileOpProgress(
-                            itemIndex = entries, itemCount = 0, bytesDone = bytes, bytesTotal = 0L,
-                            current = archiveFile.name
-                        )
-                    )
-                },
-                checkCancelled = {
-                    if (opsCenter.isStopRequested(opId) || opsCenter.queueCancelRequested || timedOut) {
-                        throw OperationCancelledException()
-                    }
-                },
-                // (دورة 6) only() لا exactOnly(): مرسلو Extract المحدد (extractHere،
-                // لصق «نقل» من أرشيف) يحددون مجلدات — التوسع لكل ما تحتها هو السلوك
-                // القديم (EntryFilter.only في ArchiveService) ويجب أن يبقى عبر الخدمة.
-                filter = if (request.selected == null) EntryFilter.ALL else EntryFilter.only(request.selected.toSet()),
-                finalNameOverride = finalNameOverride,
-                placeSelectedDirectly = if (request.placeDirectly) request.selected else null
-            )
-            extractionSucceeded = stats.finalPath != null
-            val finalName = stats.finalPath?.fileName?.toString() ?: naturalName
-            val message = if (extractionSucceeded) {
-                resources.getQuantityString(
-                    R.plurals.plurals_archive_extracted, stats.ok, stats.ok, BidiText.wrap(finalName)
-                ) + if (stats.skipped > 0) getString(R.string.archive_extracted_links, stats.skipped) else ""
-            } else {
-                getString(R.string.archive_extract_failed)
-            }
-            opsCenter.publishResult(message, opId)
-            opsCenter.publishOutcome(
-                OpOutcome(opId, OpKind.EXTRACT, stats.ok, stats.failed, stats.skipped)
-            )
-            return message
-        } finally {
-            val backup = backupPath
-            if (backup != null) {
-                if (extractionSucceeded) {
-                    // البديل نُشر بنجاح: النسخة القديمة حُسم أمرها فتُحذف
-                    // بأمان، ثم يُختم أمر الاستبدال في سجله الدائم.
-                    runCatching { org.openfilemanager.core.AtomicIO.deleteTree(backup) }
-                        .onFailure { AppLog.e("ops", "تعذر حذف النسخة الاحتياطية بعد الاستبدال: $backup", it) }
-                    opsCenter.replaceBackups.remove(opId)
-                } else {
-                    runCatching {
-                        if (!Files.exists(naturalTarget, LinkOption.NOFOLLOW_LINKS)) {
-                            moveWithoutReplacement(backup, naturalTarget)
-                            opsCenter.replaceBackups.remove(opId)
-                        } else {
-                            throw java.io.IOException("target was recreated; backup preserved at $backup")
-                        }
-                    }.onFailure {
-                        // تعذر الحسم بأمان: يبقى الأمر مسجّلاً والنسخة محفوظة
-                        // فيحاول استرداد الإقلاع التالي، ويُخبر المستخدم.
-                        AppLog.e("ops", "تعذر استعادة الوجهة السابقة من $backup", it)
-                        opsCenter.publishResult(getString(R.string.replace_backup_kept), opId)
-                    }
-                }
-            }
-        }
-    }
-
-    /** اسم بديل يحافظ على امتداد الملف المنفرد، ويتجنب أي ملف/مجلد موجود أو رابط رمزي. */
-    private fun uniqueArchiveOutputName(parent: Path, baseName: String, preserveExtension: Boolean): String {
-        val dot = if (preserveExtension) baseName.lastIndexOf('.').takeIf { it > 0 } else null
-        val originalStem = if (dot != null) baseName.substring(0, dot) else baseName
-        val extension = if (dot != null) baseName.substring(dot) else ""
-        var index = 1
-        while (index <= 100_000) {
-            val suffix = " ($index)"
-            val stemBudget = org.openfilemanager.core.NameRules.MAX_NAME_BYTES -
-                suffix.toByteArray(Charsets.UTF_8).size - extension.toByteArray(Charsets.UTF_8).size
-            if (stemBudget <= 0) throw java.io.IOException("archive name is too long to make a conflict-safe alternative")
-            var stem = originalStem
-            while (stem.isNotEmpty() && stem.toByteArray(Charsets.UTF_8).size > stemBudget) stem = stem.dropLast(1)
-            val candidate = "$stem$suffix$extension"
-            val path = parent.resolve(candidate)
-            if (org.openfilemanager.core.NameRules.problem(candidate, strictFat = false) == null &&
-                !Files.exists(path, LinkOption.NOFOLLOW_LINKS)
-            ) return candidate
-            index++
-        }
-        throw java.io.IOException("could not find an available extraction name")
-    }
-
-    /** نقل الوجهة إلى اسم احتياطي فريد دون استبدال أي عنصر آخر. */
-    private fun uniqueReplaceBackup(target: Path): Path {
-        repeat(8) {
-            val candidate = target.resolveSibling(".fm-replace-backup-${UUID.randomUUID()}")
-            if (!Files.exists(candidate, LinkOption.NOFOLLOW_LINKS)) return candidate
-        }
-        throw java.io.IOException("could not allocate a safe replacement backup name")
-    }
-
-    private fun moveWithoutReplacement(source: Path, target: Path) {
-        org.openfilemanager.core.AtomicIO.moveNoReplace(source, target)
     }
 
     /**
@@ -766,15 +498,11 @@ class FileOperationService : Service() {
     // ---------- الإشعار الإجباري للخدمة الأمامية ----------
 
     private fun createChannel() {
-        val channel = NotificationChannel(
-            CHANNEL_ID, getString(R.string.file_ops_channel), NotificationManager.IMPORTANCE_MIN
-        ).apply {
-            description = getString(R.string.file_ops_channel_desc)
-            setShowBadge(false)
-            setSound(null, null)
-            enableVibration(false)
-        }
-        notifications.createNotificationChannel(channel)
+        // استخدام NotificationChannels.ensure الموحّد بدل تكرار البناء.
+        NotificationChannels.ensure(
+            this, CHANNEL_ID, getString(R.string.file_ops_channel), getString(R.string.file_ops_channel_desc),
+            NotificationManager.IMPORTANCE_MIN
+        )
     }
 
     private fun foregroundNotification(): Notification =
@@ -799,57 +527,20 @@ class FileOperationService : Service() {
         internal const val EXTRA_OP_ID = "op_id"
         internal const val EXTRA_TOKEN = "token"
         private const val KIND_RESUME = "RESUME"
-        /** عمر أدنى لحذف المؤقتات عند الإلغاء: مؤقت أحدث قد يخص كتابة حية أخرى في المجلد نفسه. */
-        private const val CLEANUP_MIN_AGE_MS = 60_000L
         private const val CONFLICT_TIMEOUT_MS = 10L * 60 * 1000
         /** عمر طلب معلّق يُعدّ هرماً: النية لا تُعاد التسليم أصلاً (START_NOT_STICKY). */
         private const val STALE_PENDING_MS = 60L * 60 * 1000
 
-        /** (F21) مهلة قفل الاستيقاظ: قريبة من مهلة dataSync (~6 ساعات) كصمام أمان للتحرير المفقود. */
         private const val WAKELOCK_TIMEOUT_MS = 5L * 60 * 60 * 1000
 
-
-        /**
-         * يفك النية إلى طلب عملية، أو null عند الغياب أو التلف. مسار القرص أولاً:
-         * المسارات الكثيرة تتجاوز حد Binder فتحمل النية رمز الملف فقط، ويبقى
-         * الاستئناف رمزاً قصيراً في extras. معرّف العملية يسافر مع النية فيعرفه
-         * المرسل وتربط الواجهة النتيجة المهيكلة به؛ إن غاب (نية من نسخة أقدم)
-         * يولّد معرّفاً جديداً. داخلية لاختبار الانحدار (عقد opId).
-         */
+        /** يفك النية إلى طلب عملية، أو null عند الغياب أو التلف. */
         internal fun decode(intent: Intent, filesDir: File): OpRequest? {
             intent.getStringExtra(EXTRA_TOKEN)?.let { token ->
-                // (F-07) تسليم ذري: الملف يُنقل باسم opId إلى النسخ الاحتياطية قبل
+                // تسليم ذري: الملف يُنقل باسم opId إلى النسخ الاحتياطية قبل
                 // القراءة، فلا نافذة «حُذف الأصل ولم تُكتب النسخة» بعد الآن.
                 val opId = intent.getStringExtra(EXTRA_OP_ID) ?: FileOpEngine.newOpId()
                 val stored = PendingRequestStore.holdAndRead(filesDir, token, opId) ?: return null
-                return when (stored.kind) {
-                    PendingRequestStore.KIND_COPY -> OpRequest.Copy(
-                        stored.paths.map { Paths.get(it) },
-                        Paths.get(stored.target ?: return null),
-                        opId
-                    )
-                    PendingRequestStore.KIND_MOVE -> OpRequest.Move(
-                        stored.paths.map { Paths.get(it) },
-                        Paths.get(stored.target ?: return null),
-                        opId
-                    )
-                    PendingRequestStore.KIND_DELETE -> OpRequest.Delete(stored.paths.map { Paths.get(it) }, opId)
-                    PendingRequestStore.KIND_COMPRESS -> OpRequest.Compress(
-                        stored.paths.map { Paths.get(it) },
-                        Paths.get(stored.target ?: return null),
-                        requireNotNull(stored.extra),
-                        opId
-                    )
-                    PendingRequestStore.KIND_EXTRACT -> OpRequest.Extract(
-                        Paths.get(stored.paths.first()),
-                        Paths.get(stored.target ?: return null),
-                        decodeExtractCharset(stored.extra),
-                        stored.selected,
-                        opId,
-                        decodeExtractDirect(stored.extra)
-                    )
-                    else -> null
-                }
+                return stored.toOpRequest(opId)
             }
             val kind = intent.getStringExtra(EXTRA_KIND) ?: return null
             return when (kind) {
@@ -859,11 +550,13 @@ class FileOperationService : Service() {
         }
 
         /**
-         * يضيف الطلب إلى طابور الخدمة. تُستدعى من واجهة ظاهرة فقط (قيود 15+).
-         * مسارات النسخ/النقل/الحذف تُكتب على القرص: حد Binder (~1MB) كان يرمي
-         * TransactionTooLargeException عند تحديد كل ملفات مجلد كبير فتضيع
-         * العملية بصمت؛ الاستئناف رمز قصير يبقى في extras.
+         * (E3) نفس [enqueue] لكن كتابة ملف الطلب وstartForegroundService تجريان على
+         * نطاق IO لا خيط المستدعي: حذف عدد كبير من العناصر يكتب ملفاً كبيراً فلا
+         * يجمد الخيط الرئيسي. النتيجة تصل بعد اكتمال الكتابة — لا تفترضها فورية.
          */
+        suspend fun enqueueOnIo(context: Context, request: OpRequest): Boolean =
+            withContext(AppDispatchers.io) { enqueue(context, request) }
+
         fun enqueue(context: Context, request: OpRequest): Boolean {
             var token: String? = null
             return try {
@@ -874,45 +567,27 @@ class FileOperationService : Service() {
                         intent.putExtra(EXTRA_OP_ID, request.opId)
                     }
                     is OpRequest.Copy -> {
-                        token = PendingRequestStore.write(
-                            context.filesDir, PendingRequestStore.KIND_COPY,
-                            request.sources.map { it.toString() }, request.targetDir.toString()
-                        )
+                        token = writeStoredRequest(context.filesDir, request)
                         intent.putExtra(EXTRA_TOKEN, token)
                         intent.putExtra(EXTRA_OP_ID, request.opId)
                     }
                     is OpRequest.Move -> {
-                        token = PendingRequestStore.write(
-                            context.filesDir, PendingRequestStore.KIND_MOVE,
-                            request.sources.map { it.toString() }, request.targetDir.toString()
-                        )
+                        token = writeStoredRequest(context.filesDir, request)
                         intent.putExtra(EXTRA_TOKEN, token)
                         intent.putExtra(EXTRA_OP_ID, request.opId)
                     }
                     is OpRequest.Delete -> {
-                        token = PendingRequestStore.write(
-                            context.filesDir, PendingRequestStore.KIND_DELETE,
-                            request.sources.map { it.toString() }, null
-                        )
+                        token = writeStoredRequest(context.filesDir, request)
                         intent.putExtra(EXTRA_TOKEN, token)
                         intent.putExtra(EXTRA_OP_ID, request.opId)
                     }
                     is OpRequest.Compress -> {
-                        token = PendingRequestStore.write(
-                            context.filesDir, PendingRequestStore.KIND_COMPRESS,
-                            request.sources.map { it.toString() }, request.targetDir.toString(),
-                            extra = request.targetName
-                        )
+                        token = writeStoredRequest(context.filesDir, request)
                         intent.putExtra(EXTRA_TOKEN, token)
                         intent.putExtra(EXTRA_OP_ID, request.opId)
                     }
                     is OpRequest.Extract -> {
-                        token = PendingRequestStore.write(
-                            context.filesDir, PendingRequestStore.KIND_EXTRACT,
-                            listOf(request.archive.toString()), request.targetDir.toString(),
-                            extra = encodeExtractExtra(request.charsetName, request.placeDirectly),
-                            selected = request.selected
-                        )
+                        token = writeStoredRequest(context.filesDir, request)
                         intent.putExtra(EXTRA_TOKEN, token)
                         intent.putExtra(EXTRA_OP_ID, request.opId)
                     }
@@ -927,44 +602,15 @@ class FileOperationService : Service() {
                 false
             }
         }
-    }
-}
 
-    /**
-     * [0.7.9] يحوّل الطلب المخزّن إلى OpRequest بنفس مفاتيح decode تماماً —
-     * مسار الاسترداد يعيد بناء الطلب كما لو وصلت نيته الآن. امتداد علوية كي
-     * تستدعيها اختبارات الوحدة مباشرة.
-     */
-    internal fun StoredOpRequest.toOpRequest(opId: String): OpRequest? {
-        // جسم كتلي: return المبكر داخل جسم تعبيرية ممنوع في Kotlin.
-        if (kind == PendingRequestStore.KIND_DELETE) {
-            return OpRequest.Delete(paths.map { Paths.get(it) }, opId)
-        }
-        if (kind == PendingRequestStore.KIND_COMPRESS) {
-            val dir = target ?: return null
-            return OpRequest.Compress(paths.map { Paths.get(it) }, Paths.get(dir), extra ?: "", opId)
-        }
-        if (kind == PendingRequestStore.KIND_EXTRACT) {
-            val dir = target ?: return null
-            return OpRequest.Extract(
-                Paths.get(paths.first()), Paths.get(dir),
-                decodeExtractCharset(extra), selected, opId, decodeExtractDirect(extra)
+        private fun writeStoredRequest(filesDir: File, request: OpRequest): String {
+            val stored = requireNotNull(request.toStoredOpRequest()) {
+                "unreachable: only Resume encodes to null and it is handled above"
+            }
+            return PendingRequestStore.write(
+                filesDir, stored.kind, stored.paths, stored.target,
+                extra = stored.extra, selected = stored.selected
             )
         }
-        val dir = target ?: return null
-        return when (kind) {
-            PendingRequestStore.KIND_COPY -> OpRequest.Copy(paths.map { Paths.get(it) }, Paths.get(dir), opId)
-            PendingRequestStore.KIND_MOVE -> OpRequest.Move(paths.map { Paths.get(it) }, Paths.get(dir), opId)
-            else -> null
-        }
     }
-
-
-/** ترميز علم «الوضع المباشر» داخل حقل extra المخزّن (يحفظ صيغة التخزين كما هي). */
-internal fun encodeExtractExtra(charsetName: String, direct: Boolean): String =
-    if (direct) "$charsetName#direct" else charsetName
-
-internal fun decodeExtractCharset(extra: String?): String =
-    extra?.substringBefore('#')?.ifBlank { null } ?: Charsets.UTF_8.name()
-
-internal fun decodeExtractDirect(extra: String?): Boolean = extra?.endsWith("#direct") == true
+}

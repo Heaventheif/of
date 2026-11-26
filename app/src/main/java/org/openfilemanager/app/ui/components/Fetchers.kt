@@ -3,7 +3,6 @@ package org.openfilemanager.app.ui.components
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.drawable.BitmapDrawable
-import android.media.MediaMetadataRetriever
 import coil.ImageLoader
 import coil.decode.DataSource
 import coil.fetch.DrawableResult
@@ -20,9 +19,9 @@ data class ApkIcon(val path: String, val modified: Long)
 
 private class AudioArtFetcher(private val data: AudioArt, private val options: Options) : Fetcher {
     override suspend fun fetch(): FetchResult? = withContext(Dispatchers.IO) {
-        val bytes = runCatching {
-            MediaMetadataRetriever().use { r -> r.setDataSource(data.path); r.embeddedPicture }
-        }.getOrNull() ?: return@withContext null
+        // استخدام MediaProbe.embeddedArtwork الموحّد.
+        val bytes = org.openfilemanager.app.MediaProbe.embeddedArtwork(java.nio.file.Paths.get(data.path))
+            ?: return@withContext null
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
         if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return@withContext null

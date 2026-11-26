@@ -4,16 +4,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import org.openfilemanager.core.OpKind
 
-/**
- * [0.7.9] حافظة اللصق تنجو من دورة حياة ViewModel: كانت أعضاء في
- * ViewModel فتُفقد عند قتل العملية، فتُترك الحافظة ممتلئة بعد
- * MOVE اكتمل (awaitingMoveOpId ضاع) ويعيد المستخدم لصق ملفات انتقلت فعلاً.
- * Singleton في [AppContainer] — تُقرأ وتُكتب من ViewModel عبر مراجع immutable،
- * وتستمع لنتائج OpsCenter بنفسها فتفريغ حافظة القص بعد نقل ناجح لا يعود
- * معتمداً على بقاء ViewModel حياً.
- *
- * ليس في :core عمداً: يعتمد على FileEntry (طبقة أندرويد).
- */
+/** حافظة اللصق تنجو من دورة حياة ViewModel. */
 class ClipboardStore(private val opsCenter: OpsCenter, scope: CoroutineScope) {
 
     @Volatile
@@ -26,7 +17,7 @@ class ClipboardStore(private val opsCenter: OpsCenter, scope: CoroutineScope) {
     private var awaitingMoveOpId: String? = null
 
     init {
-        // [0.7.9] النتائج كانت تُجمع في init الخاص بالـ ViewModel فتضيع معه؛
+        // النتائج كانت تُجمع في init الخاص بالـ ViewModel فتضيع معه؛
         // الجمع هنا يبقى حياً ما بقيت العملية، والنطاق من AppContainer.
         scope.launch {
             opsCenter.outcomes.collect { outcome ->
@@ -39,16 +30,11 @@ class ClipboardStore(private val opsCenter: OpsCenter, scope: CoroutineScope) {
 
     val current: List<FileEntry> get() = entries
     val cut: Boolean get() = isCut
-    val pendingMoveOpId: String? get() = awaitingMoveOpId
 
     fun set(entries: List<FileEntry>, cut: Boolean) {
         this.entries = entries.toList() // defensive copy
         this.isCut = cut
         this.awaitingMoveOpId = null
-    }
-
-    fun onMoveStarted(opId: String) {
-        awaitingMoveOpId = opId
     }
 
     /**

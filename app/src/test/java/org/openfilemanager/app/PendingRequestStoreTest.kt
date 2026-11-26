@@ -2,22 +2,19 @@ package org.openfilemanager.app
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.io.File
+import java.io.IOException
 import org.openfilemanager.core.MemoryOpJournal
 import org.openfilemanager.core.OpKind
 import org.openfilemanager.core.OpRecord
 import org.openfilemanager.core.OpState
 
-/**
- * اختبارات التسليم الذري لطلبات العمليات (F-07): الطلب يُنقل باسم opId إلى
- * النسخ الاحتياطية قبل أي قراءة فلا نافذة «حُذف الأصل ولم تُكتب النسخة»،
- * وrecoverActive يطبق قواعد حالة واضحة على العلامات والنسخ الاحتياطية اليتيمة.
- * PendingRequestStore صرف java.io فتعمل هذه الاختبارات على JVM بلا أندرويد.
- */
+/** اختبارات التسليم الذري لطلبات العمليات. */
 class PendingRequestStoreTest {
     @get:Rule val tmp = TemporaryFolder()
 
@@ -113,5 +110,86 @@ class PendingRequestStoreTest {
         PendingRequestStore.removePending(root, opId)
         assertFalse(markerFile(root, opId).exists())
         assertFalse(backupFile(root, opId).exists())
+    }
+
+    // ---- (E7) مسارات فشل الكتابة: الرفض قبل لمس القرص، والاستثناء لا يترك أثراً ----
+
+    /** رفض المدخلات غير الصالحة يحدث قبل إنشاء أي ملف (فلا نفايات ولا token كاذب). */
+    @Test fun writeRejectsInvalidInputWithoutTouchingDisk() {
+        val root = tmp.newFolder("e7-invalid")
+
+        // قائمة مصادر فارغة
+        assertThrows(IllegalArgumentException::class.java) {
+            PendingRequestStore.write(root, PendingRequestStore.KIND_COPY, emptyList(), "/dst")
+        }
+        // سلسلة واحدة تتجاوز حد writeUTF (65535 بايت): الرفض من فحص الحمولة
+        val overUtfLimit = "/" + "a".repeat(70_000)
+        assertThrows(IllegalArgumentException::class.java) {
+            PendingRequestStore.write(root, PendingRequestStore.KIND_COPY, listOf(overUtfLimit), "/dst")
+        }
+        // أكثر من حد العناصر (100000)
+        val tooMany = List(100_001) { "/f$it" }
+        assertThrows(IllegalArgumentException::class.java) {
+            PendingRequestStore.write(root, PendingRequestStore.KIND_COPY, tooMany, "/dst")
+        }
+
+        // الرفض لم يُنشئ مجلد المخزن ولا أي ملف فيه
+        val dir = File(root, "pending-ops")
+        assertTrue("no store directory after pure rejections", !dir.exists() || dir.listFiles().isNullOrEmpty())
+    }
+
+    /** فشل الإدخال/الإخراج ينتشر (لا يُبتلع) — والدليل: فشل إنشاء مجلد المخزن. */
+    @Test fun writeSurfacesIoFailureAndLeavesNoTempLitter() {
+        val root = tmp.newFolder("e7-io")
+        // ملفات عادية تحتل مساري مجلدي المخزن والعلامات: mkdirs سيفشل فيهما
+        val dir = File(root, "pending-ops")
+        assertTrue(dir.createNewFile())
+        val activeDir = File(root, "active-ops")
+        assertTrue(activeDir.createNewFile())
+
+        assertThrows(IOException::class.java) {
+            PendingRequestStore.write(root, PendingRequestStore.KIND_COPY, listOf("/a"), "/dst")
+        }
+        assertThrows(IOException::class.java) {
+            PendingRequestStore.writeViewerPlaylist(root, PendingRequestStore.KIND_VIEWER_IMAGES, listOf("/a"), 0)
+        }
+        assertThrows(IOException::class.java) {
+            PendingRequestStore.markActive(root, "op-iocase")
+        }
+        // المسارات ما زالت ملفات عادية (لم تتحول لمجلدات) ولا مؤقتات تحت الجذر
+        assertFalse(dir.isDirectory)
+        assertFalse(activeDir.isDirectory)
+        root.walkTopDown().filter { it.name.startsWith(".tmp-") }.let { litter ->
+            assertTrue("no temp litter after io failures", litter.none())
+        }
+    }
+
+    /** writePending: معرّف غير صالح أو نوع غير معروف → رفض بلا نسخة احتياطية. */
+    @Test fun writePendingRejectsInvalidOpIdOrKindWithoutBackup() {
+        val root = tmp.newFolder("e7-pending")
+        assertThrows(IllegalArgumentException::class.java) {
+            PendingRequestStore.writePending(root, "bad id!", PendingRequestStore.KIND_COPY, listOf("/a"), "/b")
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            PendingRequestStore.writePending(root, "op-valid1", "WEIRD", listOf("/a"), "/b")
+        }
+        val backupDir = File(root, "pending-backup")
+        assertTrue("no backup after rejections", !backupDir.exists() || backupDir.listFiles().isNullOrEmpty())
+    }
+
+    /** writeViewerPlaylist: نوع غير مدعوم أو حدود فهرس خاطئة → رفض قبل القرص. */
+    @Test fun writeViewerPlaylistRejectsUnsupportedKindAndBadBounds() {
+        val root = tmp.newFolder("e7-playlist")
+        assertThrows(IllegalArgumentException::class.java) {
+            PendingRequestStore.writeViewerPlaylist(root, "NOPE", listOf("/a"), 0)
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            PendingRequestStore.writeViewerPlaylist(root, PendingRequestStore.KIND_VIEWER_IMAGES, emptyList(), 0)
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            PendingRequestStore.writeViewerPlaylist(root, PendingRequestStore.KIND_VIEWER_IMAGES, listOf("/a"), 5)
+        }
+        val dir = File(root, "pending-ops")
+        assertTrue("no store directory after playlist rejections", !dir.exists() || dir.listFiles().isNullOrEmpty())
     }
 }

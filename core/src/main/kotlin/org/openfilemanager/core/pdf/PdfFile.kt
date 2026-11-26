@@ -287,7 +287,7 @@ internal class PdfFile(val buf: ByteBuffer, val budget: PdfResourceBudget = PdfR
     // ---- stream decoding ----------------------------------------------------------------------------------
 
     /**
-     * (F-04) سقف البيانات الخام قبل أي تخصيص: طول stream المعلن قد يكون مضخمًا
+     * سقف البيانات الخام قبل أي تخصيص: طول stream المعلن قد يكون مضخمًا
      * (ملف غير موثوق) فكان ByteArray(len) يخصص بالطول المعلن قبل فحص أي حد.
      * التخصيص الآن مقيّد بأقل من (الطول المعلن، المتاح فعلاً في الملف، السقف).
      */
@@ -302,11 +302,6 @@ internal class PdfFile(val buf: ByteBuffer, val budget: PdfResourceBudget = PdfR
         return out
     }
 
-    /** Applies the Filter chain. Unsupported filters throw [PdfFormatException].
-     *  (F-04) الحد [maxOutput] يسري على كل المرشحات (بما فيها ASCIIHex/ASCII85)
-     *  وتراكمي عبر سلسلة المرشحات، لا لكل مرحلة وحدها.
-     *  (ميزانية) طول السلسلة محكوم (قنابل Flate المتداخلة)، وناتج كل مرحلة
-     *  يُسجّل في ميزانية المستند الكلية (قنبلة موزعة على مداخل كثيرة). */
     fun decode(s: PdfStream, maxOutput: Int = 64 * 1024 * 1024): ByteArray {
         var data = rawBytes(s)
         val filters = filterNames(s.dict["Filter"] ?: s.dict["F"])
@@ -322,7 +317,6 @@ internal class PdfFile(val buf: ByteBuffer, val budget: PdfResourceBudget = PdfR
                 "LZWDecode", "LZW" -> applyPredictor(lzw(data, int(parms[i]?.get("EarlyChange")) ?: 1, maxOutput), parms[i], maxOutput)
                 else -> throw PdfFormatException("unsupported filter $f")
             }
-            // (F-04) الحد تراكمي: ناتج كل مرحلة يخضع للسقف نفسه قبل المرحلة التالية.
             if (data.size > maxOutput) throw PdfFormatException("stream too large")
         }
         // (ميزانية) فك هذا المُعرَّف (موضعه وطوله) يُحسَب مرة واحدة في ميزانية
@@ -387,7 +381,7 @@ internal class PdfFile(val buf: ByteBuffer, val budget: PdfResourceBudget = PdfR
             if (hi < 0) hi = v else {
                 out.write((hi shl 4) or v)
                 hi = -1
-                // (F-04) فحص السقف قبل كتابة كل بايت لا بعد اكتمال الناتج كله.
+                // فحص السقف قبل كتابة كل بايت لا بعد اكتمال الناتج كله.
                 if (out.size() > max) throw PdfFormatException("stream too large")
             }
         }
@@ -407,7 +401,7 @@ internal class PdfFile(val buf: ByteBuffer, val budget: PdfResourceBudget = PdfR
         var n = 0
         var i = 0
         fun checkLimit() {
-            // (F-04) فحص السقف عند كل كتابة مجموعة.
+            // فحص السقف عند كل كتابة مجموعة.
             if (out.size() > max) throw PdfFormatException("stream too large")
         }
         if (data.size >= 2 && data[0] == '<'.code.toByte() && data[1] == '~'.code.toByte()) i = 2
@@ -477,13 +471,7 @@ internal class PdfFile(val buf: ByteBuffer, val budget: PdfResourceBudget = PdfR
         return out.toByteArray()
     }
 
-    /**
-     * (ميزانية/د1) المرشح التنبؤي: أعمدة/ألوان/بتات المكون من مدخلات غير موثوقة —
-     * الضرب والحساب في Long لا Int (تجاوز عدد صحيح كان يمرر قيمة موجبة ضخمة)،
-     * و [rowLen] محكوم بـ [maxOutput] قبل أي تخصيص: قاموس بـ 30 بايت كان يطلب
-     * مصفوفي 268 م.ب لكل منها (ByteArray(rowLen)) فيسقط التطبيق بلا أي بيانات
-     * فعلية من الملف.
-     */
+    /** (ميزانية/د1) المرشح التنبؤي. */
     private fun applyPredictor(data: ByteArray, parms: Map<String, Any?>?, maxOutput: Int): ByteArray {
         val predictor = int(parms?.get("Predictor")) ?: 1
         if (predictor < 10) return data
@@ -529,7 +517,7 @@ internal class PdfFile(val buf: ByteBuffer, val budget: PdfResourceBudget = PdfR
 
     private companion object {
         /**
-         * (F-04) سقف البيانات الخام لـ stream واحد قبل أي تخصيص: الملف نفسه
+         * سقف البيانات الخام لـ stream واحد قبل أي تخصيص: الملف نفسه
          * محمّل كله في الذاكرة أصلاً، وهذا السقف يمنع طولاً معلناً مضخماً من
          * تخصيص مصفوفة أكبر من الملف كله قبل أي فحص.
          */

@@ -1,6 +1,5 @@
 package org.openfilemanager.core
 
-import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.Path
 
@@ -26,7 +25,7 @@ object ExifOrientation {
                     marker == 0xD8 || (marker in 0xD0..0xD7) || marker == 0x01 -> continue
                     marker == 0xDA -> return 1
                 }
-                // (تصحيح) ملف مقطوع: قراءة -1 عند النهاية تُفسَّر 0xFF وتنتج طولاً
+                // ملف مقطوع: قراءة -1 عند النهاية تُفسَّر 0xFF وتنتج طولاً
                 // خاطئاً 65535 ثم EOFException من skipNBytes — نعيد الاتجاه الافتراضي.
                 val lenHi = input.read()
                 val lenLo = input.read()
@@ -91,12 +90,3 @@ object ExifOrientation {
     }
 }
 
-/** حجم بالبايت إلى بادئة ثنائية مقربة (واجهة المكتبة والخصائص). */
-fun Long.toReadableSize(): String {
-    if (this < 1024) return "$this B"
-    val units = arrayOf("KB", "MB", "GB", "TB")
-    var value = toDouble()
-    var index = -1
-    while (value >= 1024 && index < units.lastIndex) { value /= 1024; index++ }
-    return String.format(java.util.Locale.ROOT, "%.2f %s", value, units[index])
-}

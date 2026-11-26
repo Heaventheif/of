@@ -3,7 +3,6 @@ package org.openfilemanager.app.ui.screens
 import org.openfilemanager.app.ui.components.show
 import androidx.compose.material.icons.outlined.Menu
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
@@ -14,7 +13,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.grid.items
@@ -34,7 +32,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
@@ -52,6 +49,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.SelectAll
 import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material3.AlertDialog
@@ -76,6 +74,7 @@ import org.openfilemanager.app.MediaLibrary
 import org.openfilemanager.app.MusicPlaybackService
 import org.openfilemanager.app.R
 import org.openfilemanager.app.ui.components.FileRow
+import org.openfilemanager.app.ui.components.FileDetailsDialog
 import org.openfilemanager.app.ui.FileItem
 import org.openfilemanager.app.ui.installApk
 import org.openfilemanager.app.ui.openUriWithSystem
@@ -107,10 +106,7 @@ fun MediaScreen(
     var loading by remember(tab) { mutableStateOf(true) }
     var exhausted by remember(tab) { mutableStateOf(false) }
     var error by remember(tab) { mutableStateOf<String?>(null) }
-    // (F-02) الإزاحة المستهلكة من MediaStore منفصلة عن عدد العناصر المعروضة:
-    // الحذف المحلي يقلّص media.size فكان العدد الجديد يُستخدم QUERY_ARG_OFFSET
-    // فيعود ما رأيناه وتتكرر العناصر وتتقلب المفاتيح. الإزاحة تتقدم بالصفوف
-    // المستهلكة فعلاً لا بما تظهره القائمة بعد الحذف/التصفية.
+    // الإزاحة المستهلكة من MediaStore منفصلة عن عدد العناصر المعروضة: الحذف المحلي يقلّص media.size فكان العدد الجديد يُستخدم QUERY_ARG_OFFSET فيعود ما…
     var loadedOffset by remember(tab) { mutableStateOf(0) }
     // (تحديث مؤجل) حدث ContentObserver أثناء تحميل جارٍ كان يُهمل تماماً
     // ("if (loading) return") فتضيع التغييرات إن وقعت أثناء تصفّح أول صفحة —
@@ -121,6 +117,7 @@ fun MediaScreen(
     var selection by remember(tab) { mutableStateOf<Set<String>>(emptySet()) }
     var anchor by remember(tab) { mutableStateOf<String?>(null) }
     var confirmDelete by remember { mutableStateOf(false) }
+    var detailsPaths by remember { mutableStateOf<List<String>?>(null) }
     val selecting = selection.isNotEmpty()
     val haptic = LocalHapticFeedback.current
     val scope = rememberCoroutineScope()
@@ -141,7 +138,7 @@ fun MediaScreen(
     }
     fun selectedPaths(): List<String> = media.filter { it.idKey in selection }.mapNotNull { it.dataPath }
 
-    /** جسم إعادة التحميل الكامل (F-13) بلا أي نداء أمامي — يُنادى من الأخيرين فقط. */
+    /** جسم إعادة التحميل الكامل بلا أي نداء أمامي — يُنادى من الأخيرين فقط. */
     suspend fun reloadLoadedPages() {
         loading = true
         val target = loadedOffset
@@ -176,7 +173,7 @@ fun MediaScreen(
             .getOrDefault(emptyList())
         loadedOffset += page.size
         // دمج بلا تكرار: تغيّر البيانات بين الصفحات (خارجي أو حذف) قد يعيد
-        // صفوفاً رأيناها — idKey المكرر كان يكسر مفاتيح Compose (F-02).
+        // صفوفاً رأيناها — idKey المكرر كان يكسر مفاتيح Compose .
         val seen = media.mapTo(HashSet()) { it.id }
         media = media + page.filter { seen.add(it.id) }
         exhausted = page.size < MediaLibrary.PAGE_SIZE
@@ -189,12 +186,7 @@ fun MediaScreen(
         }
     }
 
-    /**
-     * (F-13) تحديث عند تغيّر MediaStore من تطبيق آخر: يُعاد تحميل كل الصفحات
-     * المحمّلة (الترتيب تغيّر فالإزاحات القديمة وحدها لا تصف قائمة سليمة) مع
-     * إزالة التكرار، والاختناق الموجود في observeChanges يحمي من تتابع الأحداث.
-     * تحميل جارٍ؟ يُؤجَّل الحدث لا يُهمل — انتهاء التحميل ينفّذه فوراً.
-     */
+    /** تحديث عند تغيّر MediaStore من تطبيق آخر. */
     suspend fun refreshLoaded() {
         if (loading) { refreshQueued = true; return }
         if (loadedOffset == 0) { loadMore(); return }
@@ -202,7 +194,7 @@ fun MediaScreen(
     }
     LaunchedEffect(tab) { loadMore() }
 
-    // (F-13) ربط observer دورة حياة الشاشة: تسجيل عند الظهور وإلغاء عند المغادرة،
+    // ربط observer دورة حياة الشاشة: تسجيل عند الظهور وإلغاء عند المغادرة،
     // فتغييرات المكتبة من تطبيقات أخرى تنعكس بدل بقائها حتى تبديل الشاشة.
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner, tab) {
@@ -237,6 +229,14 @@ fun MediaScreen(
         bottomBar = {
             if (selecting) ActionBar(
                 listOf(
+                    // (جديد) التفاصيل: الحجم والمسار الكامل والتواريخ لما هو محدد في المكتبة.
+                    ActionBarItem(Icons.Outlined.Info, stringResource(R.string.ui_details)) {
+                        val paths = selectedPaths()
+                        if (paths.isNotEmpty()) detailsPaths = paths
+                        else scope.launch {
+                            snackState.show(ctx.getString(R.string.ui_detail_unavailable), org.openfilemanager.app.ui.components.SnackKind.ERROR)
+                        }
+                    },
                     ActionBarItem(Icons.Outlined.Share, stringResource(R.string.ui_share)) { shareFiles(ctx, selectedPaths()) },
                     ActionBarItem(Icons.Outlined.Delete, stringResource(R.string.ui_delete), destructive = true) { confirmDelete = true }
                 )
@@ -294,14 +294,18 @@ fun MediaScreen(
                     else -> LazyColumn(Modifier.fillMaxSize()) {
                         items(media.size, key = { media[it].idKey }) { i ->
                             val m = media[i]
-                            val fi = FileItem("media:${m.id}", m.name, false, m.size, m.addedAt, FileKinds.of(m.name), m.dataPath)
+                            val fi = FileItem(
+                                "media:${m.id}", m.name, false, m.size, m.addedAt, FileKinds.of(m.name), m.dataPath,
+                                // اسم المجلد الحاوي يظهر في سطر المعلومات: ملفات بنفس الاسم من مجلدات مختلفة كانت لا تتميز.
+                                parent = m.dataPath?.let { File(it).parentFile?.name }
+                            )
                             FileRow(fi, m.idKey in selection, selecting, onClick = {
                                 val p = m.dataPath
                                 when {
                                     selecting -> toggle(m.idKey)
                                     tab == LibraryTab.AUDIO && p != null -> {
                                         val tracks = media.mapNotNull { it.dataPath }
-                                        // (F-03) مسارات خام للمشغل لا FileProvider URIs:
+                                        // مسارات خام للمشغل لا FileProvider URIs:
                                         // الوسوم والكلمات الجانبية تُقرأ من المسار نفسه.
                                         MusicPlaybackService.start(ctx, tracks, tracks.indexOf(p).coerceAtLeast(0))
                                         onOpenPlayer()
@@ -318,6 +322,8 @@ fun MediaScreen(
         }
     }
 
+    detailsPaths?.let { FileDetailsDialog(it) { detailsPaths = null } }
+
     if (confirmDelete) AlertDialog(
         onDismissRequest = { confirmDelete = false },
         title = { Text(stringResource(R.string.ui_delete_title, selection.size)) },
@@ -326,14 +332,17 @@ fun MediaScreen(
             TextButton({
                 confirmDelete = false
                 val paths = selectedPaths()
-                val queued = paths.isNotEmpty() &&
-                    FileOperationService.enqueue(ctx, OpRequest.Delete(paths.map { File(it).toPath() }))
-                if (queued) {
-                    val gone = selection
-                    media = media.filterNot { it.idKey in gone }
-                    selection = emptySet(); anchor = null
+                // (E3) كتابة ملف الطلب على IO: حذف دفعة كبيرة لا يجمد الخيط الرئيسي.
+                scope.launch {
+                    val queued = paths.isNotEmpty() &&
+                        FileOperationService.enqueueOnIo(ctx, OpRequest.Delete(paths.map { File(it).toPath() }))
+                    if (queued) {
+                        val gone = selection
+                        media = media.filterNot { it.idKey in gone }
+                        selection = emptySet(); anchor = null
+                    }
+                    snackState.show(ctx.getString(if (queued) R.string.ui_op_queued else R.string.ui_op_queue_failed), if (queued) org.openfilemanager.app.ui.components.SnackKind.SUCCESS else org.openfilemanager.app.ui.components.SnackKind.ERROR)
                 }
-                scope.launch { snackState.show(ctx.getString(if (queued) R.string.ui_op_queued else R.string.ui_op_queue_failed), if (queued) org.openfilemanager.app.ui.components.SnackKind.SUCCESS else org.openfilemanager.app.ui.components.SnackKind.ERROR) }
             }) { Text(stringResource(R.string.ui_delete), color = MaterialTheme.colorScheme.error) }
         },
         dismissButton = { TextButton({ confirmDelete = false }) { Text(stringResource(R.string.ui_cancel)) } }

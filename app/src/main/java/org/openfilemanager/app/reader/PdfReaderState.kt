@@ -65,6 +65,9 @@ class PdfReaderState(
     private var zoomJob: Job? = null
     private var searchJob: Job? = null
     private var bookmarkJob: Job? = null
+    // منسق الإشارات المرجعية المشترك بين القارئين — كان مكرراً.
+    private val bookmarksCtl: ReaderBookmarkController? get() =
+        if (docId.isEmpty()) null else ReaderBookmarkController(docId, ReaderFormat.PDF, store, scope)
 
     /** Request to reset the horizontal scroll (Reset zoom); consumed by the screen. */
     var resetHorizontal by mutableIntStateOf(0)
@@ -136,10 +139,7 @@ class PdfReaderState(
         aspects = FloatArray(e.pageCount) { 0.707f }
         status = ReaderStatus.Ready
 
-        // (تصحيح التمرير) عند وصول النِّسب الحقيقية للصفحات تتغير ارتفاعات عناصر
-        // القائمة، فيقفز الموضع المرئي قفزات غير منتظمة أثناء القراءة. نثبّت مرساة
-        // القراءة (الصفحة + كسرها) قبل كل تحديث ونعيد تطبيقها بعده — إلا أثناء تمرير
-        // نشط (سحب/قذف) فلا نقطع إيماءة المستخدم.
+        // (تصحيح التمرير) عند وصول النِّسب الحقيقية للصفحات تتغير ارتفاعات عناصر القائمة، فيقفز الموضع المرئي قفزات غير منتظمة أثناء القراءة.
         scope.launch {
             e.scanSizes { snapshot ->
                 val anchorPage = listState.firstVisibleItemIndex
@@ -259,12 +259,12 @@ class PdfReaderState(
     fun addBookmark(title: String) {
         val page = currentPage()
         val frac = if (listState.firstVisibleItemIndex == page) currentFraction() else 0f
-        scope.launch { store.addBookmark(docId, ReaderFormat.PDF, title, page, frac) }
+        bookmarksCtl?.add(title, page, frac)
     }
 
-    fun removeBookmark(b: Bookmark) { scope.launch { store.removeBookmark(docId, ReaderFormat.PDF, b.id) } }
+    fun removeBookmark(b: Bookmark) { bookmarksCtl?.remove(b) }
 
-    fun renameBookmark(b: Bookmark, title: String) { scope.launch { store.renameBookmark(docId, ReaderFormat.PDF, b.id, title) } }
+    fun renameBookmark(b: Bookmark, title: String) { bookmarksCtl?.rename(b, title) }
 
     // ---- search ---------------------------------------------------------------------------------------------
 

@@ -1,7 +1,6 @@
 package org.openfilemanager.core
 
 import java.io.IOException
-import java.io.InputStream
 import java.io.OutputStream
 import java.nio.file.Files
 import java.nio.file.LinkOption
@@ -20,12 +19,7 @@ sealed interface SplitZipCheck {
     data class Incomplete(val missing: List<String>) : SplitZipCheck
 }
 
-/**
- * ZIP المقسم: التفكيك فقط لا الإنشاء.
- * الصيغة المدعومة: `name.z01 … name.zNN` ثم `name.zip` (جزء خاتمة).
- * التنفيذ: تُفحص الأجزاء كلها أولاً (لا بدء بناقص)، ثم تُدمج في ملف مؤقت داخل
- * وحدة الوجهة نفسها ويُستخرج عبر [ArchiveExtractor] ثم يُحذف الملف المؤقت.
- */
+/** ZIP المقسم: التفكيك فقط لا الإنشاء. */
 object SplitZip {
     /** بصمة جزء الخاتمة في ZIP المقسم (PK\u0007\u0008)؛ تُتخطى إن وُجدت عند الدمج. */
     private val SPANNING_MARKER = byteArrayOf(0x50, 0x4B, 0x07, 0x08)
@@ -75,12 +69,7 @@ object SplitZip {
         return Int.MAX_VALUE
     }
 
-    /**
-     * يستخرج أرشيفاً مقسماً إلى [destinationDir] عبر دمجه مؤقتاً داخل مجلد مؤقت
-     * يحمل اسم الأرشيف الأصلي (حتى يكون اسم مجلد الاستخراج النهائي صحيحاً)،
-     * ثم يُحذف المؤقت بعد النجاح أو الفشل.
-     * [limits.maxTotalBytes] حد المساحة المتاحة (StatFs في طبقة أندرويد).
-     */
+    /** يستخرج أرشيفاً مقسماً إلى [destinationDir] عبر دمجه مؤقتاً داخل مجلد مؤقت يحمل اسم الأرشيف الأصلي. */
     fun extract(
         zip: Path,
         destinationDir: Path,
@@ -92,10 +81,10 @@ object SplitZip {
         finalNameOverride: String? = null
     ): ExtractReport {
         val split = check(zip)
-        require(split is SplitZipCheck.Split) { "أجزاء ناقصة أو غير مقسم: $split" }
+        require(split is SplitZipCheck.Split) { CoreOpCode.message(CoreOpCode.SPLIT_CORRUPT, split) }
         val parts = split.parts
         val combinedSize = parts.sumOf { sizeOf(it) }
-        if (combinedSize > limits.maxTotalBytes) throw ArchiveLimitException("حجم الأجزاء يتجاوز المساحة المتاحة")
+        if (combinedSize > limits.maxTotalBytes) throw ArchiveLimitException(CoreOpCode.SPLIT_TOO_LARGE)
 
         val staging = destinationDir.resolve(".fm-merge-" + System.nanoTime())
         val merged = staging.resolve(zip.fileName.toString())
@@ -151,5 +140,5 @@ object SplitZip {
 
     private fun sizeOf(part: Path): Long =
         tryOrNull { Files.readAttributes(part, java.nio.file.attribute.BasicFileAttributes::class.java, LinkOption.NOFOLLOW_LINKS).size() }
-            ?: throw IOException("تعذر قراءة الجزء: ${part.fileName}")
+            ?: throw IOException(CoreOpCode.message(CoreOpCode.PART_READ_FAILED, part.fileName))
 }

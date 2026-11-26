@@ -60,7 +60,7 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.runtime.Stable
@@ -76,8 +76,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
@@ -98,7 +96,6 @@ import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.KeyboardArrowUp
 import androidx.compose.material.icons.outlined.Save
 import androidx.compose.material.icons.outlined.Search
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.input.ImeAction
@@ -106,40 +103,24 @@ import androidx.compose.ui.text.input.OffsetMapping
 import androidx.compose.ui.text.input.TransformedText
 import androidx.compose.ui.text.input.VisualTransformation
 import java.io.File
-import java.security.MessageDigest
+import java.io.InputStream
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.openfilemanager.app.BidiText
+import org.openfilemanager.app.FeatureFlags
 import org.openfilemanager.app.R
+import org.openfilemanager.app.appContainer
+import org.openfilemanager.app.editor.FontNote
+import org.openfilemanager.app.editor.ReadFailure
+import org.openfilemanager.app.editor.SaveOutcome
+import org.openfilemanager.app.editor.TextEditorState
 import org.openfilemanager.app.ui.LocalSnack
 import org.openfilemanager.app.ui.theme.Dim
 
-private const val MAX_BYTES = 2 * 1024 * 1024
-private const val MAX_MATCHES = 5000
-
-/** أقصى عمر لمسودة غير محفوظة قبل تنظيفها عند فتح المحرر: 30 يوماً. */
-private const val DRAFT_MAX_AGE_MILLIS = 30L * 24 * 60 * 60 * 1000
-
-private class Loaded(
-    val text: String = "", val hash: ByteArray = ByteArray(0), val error: Int? = null,
-    val charset: java.nio.charset.Charset = Charsets.UTF_8, val bom: ByteArray = ByteArray(0)
-)
-
-/** Index 0 = follow the app theme; the rest are fixed presets. */
-private val BG_PRESETS: List<Color?> = listOf(
-    null, Color(0xFF1E1E1E), Color(0xFF0D1B2A), Color(0xFF14261A),
-    Color(0xFF2B2118), Color(0xFFFFFFFF), Color(0xFFF5ECD9), Color(0xFFE8EAED)
-)
-private val TEXT_PRESETS: List<Color?> = listOf(
-    null, Color(0xFFFFFFFF), Color(0xFFD4D4D4), Color(0xFF00E476),
-    Color(0xFFFFC857), Color(0xFF7FDBFF), Color(0xFF111111), Color(0xFF3B2F1E)
-)
-private val WEIGHTS = listOf(FontWeight.Light, FontWeight.Normal, FontWeight.Medium, FontWeight.Bold)
-private val WEIGHT_VALUES = listOf(300, 400, 500, 700)
-private const val MAX_FONT_BYTES = 20L * 1024 * 1024
 private const val MIN_SIZE = 11
 private const val MAX_SIZE = 28
 
@@ -166,6 +147,18 @@ private class EditorStyle(private val ctx: Context) {
     }
 }
 
+/** Index 0 = follow the app theme; the rest are fixed presets. */
+private val BG_PRESETS: List<Color?> = listOf(
+    null, Color(0xFF1E1E1E), Color(0xFF0D1B2A), Color(0xFF14261A),
+    Color(0xFF2B2118), Color(0xFFFFFFFF), Color(0xFFF5ECD9), Color(0xFFE8EAED)
+)
+private val TEXT_PRESETS: List<Color?> = listOf(
+    null, Color(0xFFFFFFFF), Color(0xFFD4D4D4), Color(0xFF00E476),
+    Color(0xFFFFC857), Color(0xFF7FDBFF), Color(0xFF111111), Color(0xFF3B2F1E)
+)
+private val WEIGHTS = listOf(FontWeight.Light, FontWeight.Normal, FontWeight.Medium, FontWeight.Bold)
+private val WEIGHT_VALUES = listOf(300, 400, 500, 700)
+
 /** Full-screen text editor (replaces the old dialog). Saves atomically and refuses if the file changed underneath. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -175,61 +168,51 @@ fun TextEditorScreen(path: String, readOnly: Boolean, onBack: () -> Unit, onSave
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     val style = remember { EditorStyle(ctx) }
+    if (FeatureFlags.perReaderPrefs) {
+        var sizeLoaded by remember { mutableStateOf(false) }
+        LaunchedEffect(Unit) {
+            runCatching { style.size = ctx.appContainer.readerStore.prefsNow().textEditorFontPx }
+            sizeLoaded = true
+        }
+        LaunchedEffect(style.size) {
+            // قبل اكتمال التحميل لا شيء يُكتب (تثبيت جديد لا يكتب المفتاح بمجرد فتح المحرر)،
+            // وبعده كل تغييرة فعليّة تُكتب في مفتاح المحرر الخاص فقط.
+            if (!sizeLoaded) return@LaunchedEffect
+            delay(500)
+            runCatching { ctx.appContainer.readerStore.setTextEditorFont(style.size) }
+        }
+    }
     var showStyle by remember { mutableStateOf(false) }
     val focus = remember { FocusRequester() }
     var layout by remember { mutableStateOf<TextLayoutResult?>(null) }
-    var loading by remember { mutableStateOf(true) }
-    var original by remember { mutableStateOf("") }
-    var hash by remember { mutableStateOf(ByteArray(0)) }
-    var fileCharset by remember { mutableStateOf<java.nio.charset.Charset>(Charsets.UTF_8) }
-    var fileBom by remember { mutableStateOf(ByteArray(0)) }
-    // DraftStore ينشئ مجلد المسودات بنفسه ويُقلَّم: تنظيف المسودات اليتيمة (> 30 يوماً)
-    // عند فتح المحرر، فيكون عدد الملفات في filesDir/drafts محدوداً دائماً.
-    val drafts = remember {
-        org.openfilemanager.core.DraftStore(File(ctx.filesDir, "drafts").toPath()).also { store ->
-            runCatching { store.prune(DRAFT_MAX_AGE_MILLIS) }
+    val editor = remember {
+        TextEditorState(
+            readOnly = readOnly,
+            drafts = org.openfilemanager.core.DraftStore(File(ctx.filesDir, "drafts").toPath()),
+            fontsDir = File(ctx.filesDir, "fonts"),
+        ).also { state ->
+            runCatching { state.pruneDrafts() }
+            state.refreshImportedFonts()
         }
     }
+    SideEffect { editor.readOnly = readOnly }
+    val loading by editor.loading.collectAsState()
+    val failed by editor.failed.collectAsState()
+    val text by editor.text.collectAsState()
+    val dirty by editor.dirty.collectAsState()
+    val searching by editor.searching.collectAsState()
+    val query by editor.query.collectAsState()
+    val matches by editor.matches.collectAsState()
+    val cur by editor.cur.collectAsState()
+    val navTick by editor.navTick.collectAsState()
+    val searchNav by editor.searchNav.collectAsState()
     // The field keeps its own selection/composition (IME) state; `text` is just its string for the rest of the screen.
     var field by remember { mutableStateOf(androidx.compose.ui.text.input.TextFieldValue("")) }
-    val text by remember { derivedStateOf { field.text } }
-    var failed by remember { mutableStateOf<Int?>(null) }
     var askDiscard by remember { mutableStateOf(false) }
-    val dirty = !readOnly && text != original
     val scroll = rememberScrollState()
     val searchFocus = remember { FocusRequester() }
-    var searching by remember { mutableStateOf(false) }
-    var query by remember { mutableStateOf("") }
-    var current by remember { mutableStateOf(0) }
-    // مواضع كل التطابقات (بلا حساسية لحالة الأحرف)
-    val matches = remember(text, query) {
-        if (query.isEmpty()) emptyList()
-        else buildList {
-            var i = text.indexOf(query, 0, ignoreCase = true)
-            while (i >= 0 && size < MAX_MATCHES) { add(i); i = text.indexOf(query, i + query.length, ignoreCase = true) }
-        }
-    }
-    // الفهرس المعروض دائماً ضمن 0..size-1: تعديل النص أثناء البحث قد يقلّص التطابقات فلا يبقى «12/10».
-    val cur = if (matches.isEmpty()) 0 else current.coerceIn(0, matches.size - 1)
-    // searchNav: آخر ما حرّك التمرير هو التنقل بين النتائج (لا مؤشر الكتابة). كان مؤشر الكتابة يعيد
-    // التمرير إلى موضعه عند كل إعادة قياس للنص (والتظليل يعيد القياس مع كل «التالي»)، فيلغي
-    // الانتقال إلى التطابق ويبدو التقليب عالقاً بينما العدّاد يتحرك. يعود false عند أي تحرير فعلي.
-    var searchNav by remember { mutableStateOf(false) }
-    var navTick by remember { mutableIntStateOf(0) }
     var viewportH by remember { mutableIntStateOf(0) }
     val layoutNow by rememberUpdatedState(layout)
-    // استعلام جديد: ابدأ من أول تطابق وانتقل إليه؛ إغلاق البحث يعيد التمرير لمؤشر الكتابة.
-    LaunchedEffect(query) {
-        current = 0
-        searchNav = query.isNotEmpty()
-        if (query.isNotEmpty()) navTick++
-    }
-    fun step(delta: Int) {
-        if (matches.isEmpty()) return
-        searchNav = true
-        current = (cur + delta + matches.size) % matches.size
-        navTick++ // يعيد التمرير حتى لو بقي الفهرس نفسه (تطابق وحيد)
-    }
     // الانتقال بالتمرير إلى التطابق الحالي. المفاتيح بلا `layout`: إعادة القياس بسبب التظليل
     // لم تعد تُلغي الحركة وتعيد تشغيلها (تقطيع/ارتداد)؛ ننتظر فقط تخطيطاً يطابق النص الحالي.
     LaunchedEffect(cur, navTick) {
@@ -238,66 +221,42 @@ fun TextEditorScreen(path: String, readOnly: Boolean, onBack: () -> Unit, onSave
         val l = snapshotFlow { layoutNow?.takeIf { it.layoutInput.text.text == text } }.filterNotNull().first()
         if (at > l.layoutInput.text.length) return@LaunchedEffect
         val top = l.getLineTop(l.getLineForOffset(at))
-        val lead = (viewportH / 3).coerceIn(48, 240)
-        val target = (top - lead).toInt().coerceAtLeast(0)
+        val target = editor.matchScrollTarget(top, viewportH)
         // (تصحيح التمرير) قفزة فورية للتطابقات البعيدة كي لا يعبر التحريك المتحرك
         // الملف كله ببطء وبتقطّع؛ وتحريك سلس للتطابقات المتقاربة فقط.
-        if (kotlin.math.abs(target - scroll.value) > 2000) scroll.scrollTo(target)
+        if (editor.isFarJump(target, scroll.value)) scroll.scrollTo(target)
         else scroll.animateScrollTo(target)
     }
 
     LaunchedEffect(path) {
-        val r: Loaded = withContext(Dispatchers.IO) {
-            runCatching {
-                if (!file.isFile || file.length() > MAX_BYTES) Loaded(error = R.string.ui_err_too_large)
-                else {
-                    val bytes = file.readBytes()
-                    val decoded = org.openfilemanager.core.TextFile.decode(bytes)
-                    Loaded(decoded.text, MessageDigest.getInstance("SHA-256").digest(bytes), null, decoded.charset, decoded.bom)
-                }
-            }.getOrElse { Loaded(error = R.string.ui_err_read_file) }
-        }
+        val r = editor.load(path)
         if (r.error == null) {
-            original = r.text; hash = r.hash; fileCharset = r.charset; fileBom = r.bom
+            field = androidx.compose.ui.text.input.TextFieldValue(r.textToOpen)
             // مسودة غير محفوظة من جلسة انقطعت: تُستعاد فوق الأصل ويبقى «غير محفوظ» حتى يضغط المستخدم حفظ.
-            val draft = if (readOnly) null else withContext(Dispatchers.IO) { runCatching { drafts.load(path) }.getOrNull() }
-            val restored = draft?.takeIf { it != r.text }
-            field = androidx.compose.ui.text.input.TextFieldValue(restored ?: r.text)
-            if (restored != null) snack.show(ctx.getString(R.string.ui_draft_restored), org.openfilemanager.app.ui.components.SnackKind.INFO)
-        } else failed = r.error
-        loading = false
+            if (r.restoredDraft) snack.show(ctx.getString(R.string.ui_draft_restored), org.openfilemanager.app.ui.components.SnackKind.INFO)
+        }
     }
 
     fun save() {
         scope.launch {
-            val msg = withContext(Dispatchers.IO) {
-                runCatching {
-                    val bytes = try {
-                        org.openfilemanager.core.TextFile.encode(text, fileCharset, fileBom)
-                    } catch (_: java.nio.charset.CharacterCodingException) {
-                        return@runCatching R.string.ui_err_encoding
-                    }
-                    if (bytes.size > MAX_BYTES) return@runCatching R.string.ui_err_too_large
-                    val now = MessageDigest.getInstance("SHA-256").digest(file.readBytes())
-                    if (!now.contentEquals(hash)) return@runCatching R.string.ui_err_changed
-                    // مؤقت + fsync + استبدال (مع بديل غير ذري على FAT) وتنظيف المؤقت عند الفشل.
-                    org.openfilemanager.core.AtomicIO.atomicWrite(file.toPath()) { it.write(bytes) }
-                    runCatching { drafts.remove(path) }
-                    hash = MessageDigest.getInstance("SHA-256").digest(bytes)
-                    original = text
-                    R.string.ui_saved
-                }.getOrDefault(R.string.ui_err_save)
+            val outcome = editor.save(path)
+            if (outcome == SaveOutcome.Saved) onSaved()
+            val msg = when (outcome) {
+                SaveOutcome.Saved -> R.string.ui_saved
+                SaveOutcome.Encoding -> R.string.ui_err_encoding
+                SaveOutcome.TooLarge -> R.string.ui_err_too_large
+                SaveOutcome.Changed -> R.string.ui_err_changed
+                SaveOutcome.Error -> R.string.ui_err_save
             }
-            if (msg == R.string.ui_saved) onSaved()
-            snack.show(ctx.getString(msg), if (msg == R.string.ui_saved) org.openfilemanager.app.ui.components.SnackKind.SUCCESS else org.openfilemanager.app.ui.components.SnackKind.ERROR)
+            snack.show(ctx.getString(msg), if (outcome == SaveOutcome.Saved) org.openfilemanager.app.ui.components.SnackKind.SUCCESS else org.openfilemanager.app.ui.components.SnackKind.ERROR)
         }
     }
 
-    // حفظ تلقائي للمسودة بعد توقف الكتابة؛ يُحذف عند الحفظ أو التجاهل.
+    // حفظ تلقائي للمسودة بعد توقف الكتابة (المهلة داخل editor.autosaveDraft بمُوفِّت محقون)؛
+    // تُحذف عند الحفظ أو التجاهل. المفتاح والشرط كما كانا حرفياً.
     LaunchedEffect(text, dirty, loading) {
-        if (loading || readOnly || !dirty) return@LaunchedEffect
-        kotlinx.coroutines.delay(1500)
-        withContext(Dispatchers.IO) { runCatching { drafts.save(path, text) } }
+        if (!editor.shouldAutosaveDraft()) return@LaunchedEffect
+        editor.autosaveDraft(path)
     }
 
     BackHandler { if (dirty) askDiscard = true else onBack() }
@@ -320,7 +279,7 @@ fun TextEditorScreen(path: String, readOnly: Boolean, onBack: () -> Unit, onSave
                     }
                 },
                 actions = {
-                    IconButton({ searching = !searching; if (!searching) query = "" }) {
+                    IconButton({ editor.toggleSearch() }) {
                         Icon(Icons.Outlined.Search, stringResource(R.string.ui_search))
                     }
                     IconButton({ showStyle = true }) { Icon(Icons.Outlined.FormatSize, stringResource(R.string.ui_editor_style)) }
@@ -339,11 +298,11 @@ fun TextEditorScreen(path: String, readOnly: Boolean, onBack: () -> Unit, onSave
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 androidx.compose.material3.OutlinedTextField(
-                    value = query, onValueChange = { query = it },
+                    value = query, onValueChange = { editor.onQueryChanged(it) },
                     singleLine = true,
                     placeholder = { Text(stringResource(R.string.ui_search_in_file)) },
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                    keyboardActions = KeyboardActions(onSearch = { step(1) }),
+                    keyboardActions = KeyboardActions(onSearch = { editor.step(1) }),
                     modifier = Modifier.weight(1f).focusRequester(searchFocus)
                 )
                 Text(
@@ -352,15 +311,15 @@ fun TextEditorScreen(path: String, readOnly: Boolean, onBack: () -> Unit, onSave
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(horizontal = 6.dp)
                 )
-                IconButton({ step(-1) }, enabled = matches.isNotEmpty()) { Icon(Icons.Outlined.KeyboardArrowUp, stringResource(R.string.ui_prev_match)) }
-                IconButton({ step(1) }, enabled = matches.isNotEmpty()) { Icon(Icons.Outlined.KeyboardArrowDown, stringResource(R.string.ui_next_match)) }
+                IconButton({ editor.step(-1) }, enabled = matches.isNotEmpty()) { Icon(Icons.Outlined.KeyboardArrowUp, stringResource(R.string.ui_prev_match)) }
+                IconButton({ editor.step(1) }, enabled = matches.isNotEmpty()) { Icon(Icons.Outlined.KeyboardArrowDown, stringResource(R.string.ui_next_match)) }
             }
         }
         Box(Modifier.weight(1f).fillMaxWidth()) {
             when {
                 loading -> CircularProgressIndicator(Modifier.align(Alignment.Center))
                 failed != null -> Text(
-                    stringResource(failed ?: R.string.ui_err_read_file), color = MaterialTheme.colorScheme.error,
+                    stringResource(readFailureRes(failed)), color = MaterialTheme.colorScheme.error,
                     modifier = Modifier.align(Alignment.Center).padding(32.dp)
                 )
                 else -> {
@@ -436,8 +395,9 @@ fun TextEditorScreen(path: String, readOnly: Boolean, onBack: () -> Unit, onSave
                             BasicTextField(
                                 value = field,
                                 onValueChange = {
-                                    if (it.text != field.text || it.selection != field.selection) searchNav = false
+                                    if (it.text != field.text || it.selection != field.selection) editor.clearSearchNav()
                                     field = it
+                                    editor.onEditText(it.text)
                                 },
                                 readOnly = readOnly,
                                 textStyle = codeStyle,
@@ -455,20 +415,29 @@ fun TextEditorScreen(path: String, readOnly: Boolean, onBack: () -> Unit, onSave
         }
     }
 
-    if (showStyle) StyleSheet(style) { showStyle = false }
+    if (showStyle) StyleSheet(style, editor) { showStyle = false }
 
     if (askDiscard) AlertDialog(
         onDismissRequest = { askDiscard = false },
         title = { Text(stringResource(R.string.ui_discard_title)) },
         text = { Text(stringResource(R.string.ui_discard_body)) },
-        confirmButton = { TextButton({ askDiscard = false; runCatching { drafts.remove(path) }; onBack() }) { Text(stringResource(R.string.ui_discard), color = MaterialTheme.colorScheme.error) } },
+        confirmButton = { TextButton({
+            askDiscard = false
+            scope.launch { editor.clearDraft(path); onBack() }
+        }) { Text(stringResource(R.string.ui_discard), color = MaterialTheme.colorScheme.error) } },
         dismissButton = { TextButton({ askDiscard = false }) { Text(stringResource(R.string.ui_keep_editing)) } }
     )
 }
 
+/** ترجمة فشل الفتح إلى مورد النص (كانت الحالة Int? للمورد سلفاً). */
+private fun readFailureRes(f: ReadFailure?): Int = when (f) {
+    ReadFailure.TooLarge -> R.string.ui_err_too_large
+    ReadFailure.ReadError, null -> R.string.ui_err_read_file
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun StyleSheet(style: EditorStyle, onDismiss: () -> Unit) {
+private fun StyleSheet(style: EditorStyle, editor: TextEditorState, onDismiss: () -> Unit) {
     ModalBottomSheet(onDismissRequest = { style.save(); onDismiss() }, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         Column(
             Modifier.navigationBarsPadding().verticalScroll(rememberScrollState()).padding(horizontal = Dim.Gutter + 8.dp),
@@ -476,7 +445,7 @@ private fun StyleSheet(style: EditorStyle, onDismiss: () -> Unit) {
         ) {
             Text(stringResource(R.string.ui_editor_style), style = MaterialTheme.typography.titleMedium)
             SwitchRow(stringResource(R.string.ui_line_numbers), style.lineNumbers) { style.lineNumbers = it }
-            FontPicker(style)
+            FontPicker(style, editor)
 
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(stringResource(R.string.ui_font_size), Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
@@ -511,9 +480,6 @@ private fun StyleSheet(style: EditorStyle, onDismiss: () -> Unit) {
 
 private fun fontsDir(ctx: Context) = File(ctx.filesDir, "fonts")
 
-private fun listFonts(ctx: Context): List<String> =
-    fontsDir(ctx).listFiles { f -> f.isFile && !f.name.startsWith(".") }?.map { it.name }?.sorted().orEmpty()
-
 /** Built-in families, or an imported font file. Imported fonts get the chosen weight through Typeface.create. */
 private fun resolveFamily(ctx: Context, key: String, weight: Int): FontFamily = when {
     key == "serif" -> FontFamily.Serif
@@ -526,54 +492,43 @@ private fun resolveFamily(ctx: Context, key: String, weight: Int): FontFamily = 
     else -> FontFamily.Default
 }
 
-/** Copies a picked TTF/OTF into app storage after checking that Android can actually load it. Returns the saved name. */
-private fun importFont(ctx: Context, uri: Uri): String? = runCatching {
-    val resolver = ctx.contentResolver
-    val display = resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
-        ?.use { if (it.moveToFirst()) it.getString(0) else null } ?: return@runCatching null
-    val ext = display.substringAfterLast('.', "").lowercase()
-    if (ext != "ttf" && ext != "otf") return@runCatching null
-    val safe = display.replace(Regex("[^\\p{L}\\p{N}._ -]"), "_").trimStart('.').take(80)
-    if (safe.isBlank()) return@runCatching null
-    val dir = fontsDir(ctx).apply { mkdirs() }
-    val tmp = File(dir, ".import-${System.nanoTime()}.tmp")
-    try {
-        resolver.openInputStream(uri)?.use { input ->
-            tmp.outputStream().use { out ->
-                val buf = ByteArray(64 * 1024)
-                var total = 0L
-                while (true) {
-                    val n = input.read(buf)
-                    if (n < 0) break
-                    total += n
-                    if (total > MAX_FONT_BYTES) return@runCatching null
-                    out.write(buf, 0, n)
-                }
-            }
-        } ?: return@runCatching null
-        if (Typeface.Builder(tmp).build() == null) return@runCatching null
-        val target = File(dir, safe)
-        if (target.exists()) target.delete()
-        if (tmp.renameTo(target)) safe else null
-    } finally {
-        tmp.delete()
+/**
+ * أجزاء الاستيراد المحتكّة بأندرويد (ContentResolver): اسم العميل وفتح دفق القراءة —
+ * على IO كما كان importFont السلف. القرار والحالة في TextEditorState.importFont.
+ */
+private suspend fun fontDisplayAndOpener(ctx: Context, uri: Uri): Pair<String?, (() -> InputStream?)?> =
+    withContext(Dispatchers.IO) {
+        runCatching {
+            val resolver = ctx.contentResolver
+            val display = resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
+                ?.use { if (it.moveToFirst()) it.getString(0) else null }
+            display to { resolver.openInputStream(uri) }
+        }.getOrNull() ?: (null to null)
     }
-}.getOrNull()
+
+/** ترجمة ملاحظة استيراد الخط إلى مورد النص (كانت Int? للمورد سلفاً). */
+private fun fontNoteRes(n: FontNote?): Int = when (n) {
+    FontNote.Imported -> R.string.ui_font_imported
+    FontNote.Error -> R.string.ui_err_font
+    null -> R.string.ui_font_hint
+}
 
 @Composable
-private fun FontPicker(style: EditorStyle) {
+private fun FontPicker(style: EditorStyle, editor: TextEditorState) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
-    var imported by remember { mutableStateOf(listFonts(ctx)) }
-    var note by remember { mutableStateOf<Int?>(null) }
+    val imported by editor.importedFonts.collectAsState()
+    val note by editor.fontNote.collectAsState()
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) scope.launch {
-            val name = withContext(Dispatchers.IO) { importFont(ctx, uri) }
-            if (name == null) note = R.string.ui_err_font
+            val (display, opener) = fontDisplayAndOpener(ctx, uri)
+            // تحقق أندرويد الحقيقي أن الخط يُحمَّل (كانت L554) — يمرَّر محقوناً إلى آلة الحالة.
+            val canLoad: (File) -> Boolean = { f -> runCatching { Typeface.Builder(f).build() }.getOrNull() != null }
+            val name = editor.importFont(display, opener, canLoad)
+            if (name == null) editor.onFontImportFailed()
             else {
-                imported = listFonts(ctx)
+                editor.onFontImported()
                 style.font = "file:$name"
-                note = R.string.ui_font_imported
             }
         }
     }
@@ -594,23 +549,22 @@ private fun FontPicker(style: EditorStyle) {
                     Icon(
                         Icons.Outlined.Close, null,
                         modifier = Modifier.size(18.dp).clip(CircleShape).clickable {
-                            File(fontsDir(ctx), name).delete()
+                            editor.deleteImportedFont(name)
                             if (style.font == key) style.font = "default"
-                            imported = listFonts(ctx)
                         }
                     )
                 }
             )
         }
     }
-    TextButton({ note = null; picker.launch(arrayOf("*/*")) }) {
+    TextButton({ editor.onFontPickRequested(); picker.launch(arrayOf("*/*")) }) {
         Icon(Icons.Outlined.FileOpen, null, modifier = Modifier.size(20.dp))
         Spacer(Modifier.width(8.dp))
         Text(stringResource(R.string.ui_import_font))
     }
     Text(
-        stringResource(note ?: R.string.ui_font_hint), style = MaterialTheme.typography.bodyMedium,
-        color = if (note == R.string.ui_err_font) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
+        stringResource(fontNoteRes(note)), style = MaterialTheme.typography.bodyMedium,
+        color = if (note == FontNote.Error) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
     )
 }
 

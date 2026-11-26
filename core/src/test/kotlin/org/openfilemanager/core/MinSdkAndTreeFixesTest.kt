@@ -7,7 +7,6 @@ import org.junit.Assume.assumeTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
-import java.io.ByteArrayInputStream
 import java.io.EOFException
 import java.io.InputStream
 import java.nio.file.Files

@@ -48,12 +48,7 @@
     <string name="ie_text_intro">أضف نصاً فوق الصورة ثم عدّله ونسّقه كما تريد — يبقى قابلاً للتعديل حتى الحفظ.</string>
     <string name="ie_text_hint">اكتب النص هنا</string>
     <string name="ie_font_size">حجم الخط</string>
-    <string name="ie_font">الخط</string>
     <string name="ie_font_default">افتراضي</string>
-    <string name="ie_font_sans">سانس</string>
-    <string name="ie_font_serif">سيريف</string>
-    <string name="ie_font_mono">أحادي المسافة</string>
-    <string name="ie_font_cursive">كتابي</string>
     <string name="ie_bold">عريض</string>
     <string name="ie_align_start">إلى البداية</string>
     <string name="ie_align_center">توسيط</string>

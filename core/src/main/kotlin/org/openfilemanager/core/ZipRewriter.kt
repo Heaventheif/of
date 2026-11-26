@@ -40,10 +40,7 @@ object ZipRewriter {
 
         val temp = archive.resolveSibling(".${archive.fileName}.edit-${System.nanoTime()}.tmp")
         try {
-            // (F20) Commons ZipFile يكشف الخصائص الخارجية التي يخفيها java.util.zip.
             org.apache.commons.compress.archivers.zip.ZipFile.builder().setPath(archive).get().use { source ->
-                // (F20) ZipArchiveOutputStream (Commons Compress) بدل java.util.zip:
-                // الوحيد الذي يكتب الخصائص الخارجية (وضع Unix) على المداخل.
                 ZipArchiveOutputStream(BufferedOutputStream(Files.newOutputStream(temp))).use { rawOut ->
                     // أسماء UTF-8 مع علم EFS (نفس سلوك ZipCreator للأسماء العربية).
                     rawOut.setEncoding(Charsets.UTF_8.name())
@@ -66,7 +63,6 @@ object ZipRewriter {
                                     e.method = ZipEntry.STORED
                                     e.size = old.size; e.compressedSize = old.size; e.crc = old.crc
                                 }
-                                // (F20) استعادة وضع Unix الأصلي (من الخصائص الخارجية للمدخل القديم نفسه).
                                 out.put(e, src.unixMode, isDirectory = false)
                                 source.getInputStream(old).use { it.copyTo(out.stream()) } // throws for encrypted entries -> abort, original safe
                                 out.close()
@@ -89,12 +85,6 @@ object ZipRewriter {
         }
     }
 
-    /**
-     * (F20) غلاف موحّد فوق ZipArchiveOutputStream: يبدّل java.util.zip.ZipEntry
-     * إلى ZipArchiveEntry (يمرر الاسم/الوقت/التعليق/STORED كما هي) ويكتب وضع
-     * Unix في الخصائص الخارجية بتنسيق info-zip: بتات النظام صفر، 3.0 (Unix)
-     * في الحقل العلوي، والوضع في الحقلين الأوسطين. -1 = لا شيء مسجل فلا يُمَس.
-     */
     private class ZipOut(private val raw: ZipArchiveOutputStream) {
         fun put(e: ZipEntry, unixMode: Int, isDirectory: Boolean) {
             val out = org.apache.commons.compress.archivers.zip.ZipArchiveEntry(e.name).apply {
@@ -116,12 +106,7 @@ object ZipRewriter {
         fun close() = raw.closeArchiveEntry()
     }
 
-    /**
-     * Atomic rename first. Android shared storage (FUSE) often refuses ATOMIC_MOVE or a rename over a file
-     * the app did not create, so fall back to a plain move and finally to an in-place overwrite that is
-     * always guarded by a full backup copy of the original (see [overwriteWithBackup]). The temp copy is
-     * fsynced first and is already verified; it stays on disk until this returns.
-     */
+    /** Atomic rename first. Android shared storage. */
     private fun replaceOriginal(temp: Path, archive: Path, entries: List<ZipEntryInfo>) {
         AtomicIO.fsyncFile(temp)
         try {
@@ -214,15 +199,7 @@ object ZipRewriter {
         }
     }
 
-    /**
-     * Copies one stored entry (by its ORIGINAL name) to [dest]; used to open an entry without extracting the rest.
-     *
-     * (حدود) كل مسارات الاستخراج الأخرى تعمل تحت [ExtractLimits] — هذا المسار كان
-     * الاستثناء: Files.copy بلا أي حد، فمدخل مضغوط بمُعامل ~1000:1 أو بحجم
-     * معلن كاذب يملأ تقسيم /data كله (حجب التطبيقات) قبل أول فحص. الآن:
-     * سقف مطلق لناتج المدخل، سقف مُعامل مقارنةً بالحجم المضغوط المعلن، تحقق من
-     * الحجم المعلن بعد النسخ، ونشر مؤقت ذري — لا ملف نصف مكتوب باسم المدخل.
-     */
+    /** Copies one stored entry (by its ORIGINAL name) to [dest]; used to open an entry without extracting the rest. */
     fun extractOne(archive: Path, originalName: String, dest: Path) {
         java.util.zip.ZipFile(archive.toFile()).use { zf ->
             val entry = zf.getEntry(originalName)?.takeIf { !it.isDirectory } ?: throw IOException("entry not found")
@@ -333,13 +310,7 @@ object ZipRewriter {
         return written
     }
 
-    private fun uniqueOnDisk(root: Path, base: String): String {
-        if (!Files.exists(root.resolve(base))) return base
-        val dot = base.lastIndexOf('.')
-        val stem = if (dot > 0) base.substring(0, dot) else base
-        val ext = if (dot > 0) base.substring(dot) else ""
-        var n = 1
-        while (Files.exists(root.resolve("$stem ($n)$ext"))) n++
-        return "$stem ($n)$ext"
-    }
+    private fun uniqueOnDisk(root: Path, base: String): String =
+        // توحيد منطق الاسم الفريد عبر NameRules.uniqueName.
+        NameRules.uniqueName(base) { c -> Files.exists(root.resolve(c)) }
 }

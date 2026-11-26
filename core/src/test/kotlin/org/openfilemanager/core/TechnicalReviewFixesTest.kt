@@ -156,8 +156,6 @@ class TechnicalReviewFixesTest {
         assertEquals(2, load.model!!.entries().size)
     }
 
-    // ---- F-10: فرادة أسماء مداخل خطة الضغط ----
-
     @Test fun planRefusesDuplicateEntryNamesFromDifferentSources() {
         val d1 = dir("p1"); write(d1.resolve("same.txt"), "1")
         val d2 = dir("p2"); write(d2.resolve("same.txt"), "2")
@@ -278,9 +276,6 @@ class TechnicalReviewFixesTest {
     }
 
     @Test fun filterChainLimitIsCumulativeNotPerStage() {
-        // سلسلة Flate ثم ASCIIHex: الناتج الوسيط 4000 خانة سدس عشرية (فك Flate)
-        // والنهائي 2000 بايت — سقف دون الناتج الوسيط يرفض عند المرحلة الأولى
-        // نفسها (فحص كل مرحلة لا الناتج النهائي فقط)، والسقف الواسع يمرّ السلسلة.
         val mid = ByteArray(2000) { 'A'.code.toByte() }
         val hex = mid.joinToString("") { "%02x".format(it) }.toByteArray(Charsets.ISO_8859_1)
         val deflated = ByteArrayOutputStream().let { bos ->

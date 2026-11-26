@@ -1,7 +1,5 @@
 package org.openfilemanager.core.imageedit
 
-import kotlin.math.abs
-
 /**
  * تعديلات الصورة الأساس (الإضاءة/التباين/التشبّع/الدفء/التظليل الحوافي). قيم كل
  * مفردة -100..100 حيث 0 = بلا تغيير. خالصة بلا أندرويد كي تُختبر على JVM، وتتحوّل
@@ -81,7 +79,6 @@ data class Adjust(
             return out
         }
 
-        internal fun approx(a: Float, b: Float, eps: Float = 0.01f): Boolean = abs(a - b) <= eps
     }
 }
 

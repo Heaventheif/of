@@ -6,3 +6,8 @@ local.properties
 *.jks
 keystore.b64
 release.keystore
+skills/
+node_modules/
+tools/
+.env
+.kotlin/

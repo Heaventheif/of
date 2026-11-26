@@ -11,11 +11,3 @@ interface KvStore {
     fun keys(): Set<String>
 }
 
-/** تنفيذ في الذاكرة للاختبارات. */
-class MemoryKvStore : KvStore {
-    private val map = LinkedHashMap<String, String>()
-    override fun getString(key: String): String? = map[key]
-    override fun putString(key: String, value: String) { map[key] = value }
-    override fun remove(key: String) { map.remove(key) }
-    override fun keys(): Set<String> = map.keys.toSet()
-}

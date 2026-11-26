@@ -16,50 +16,36 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.filter
-import kotlinx.coroutines.flow.filterNotNull
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.openfilemanager.app.ArchiveRejections
 import org.openfilemanager.app.AppDispatchers
-import org.openfilemanager.app.AppLog
 import org.openfilemanager.app.BrowserLocation
-import org.openfilemanager.app.ExtractOutcome
+import org.openfilemanager.app.FeatureFlags
 import org.openfilemanager.app.FileOperationService
 import org.openfilemanager.app.OpRequest
 import org.openfilemanager.app.R
 import org.openfilemanager.app.appContainer
+import org.openfilemanager.app.usecase.RenameCoordinator
+import org.openfilemanager.app.usecase.ZipItemTransfer
 import org.openfilemanager.core.ArchiveInspector
 import org.openfilemanager.core.BatchRename
 import org.openfilemanager.core.BatchRenameSpec
-import org.openfilemanager.core.RenameEngine
-import org.openfilemanager.core.RenameInput
-import org.openfilemanager.core.RenameJournal
-import org.openfilemanager.core.RenameOutcome
-import org.openfilemanager.core.RenamePhase
-import org.openfilemanager.core.RenameStep
-import org.openfilemanager.core.EntryFilter
 import org.openfilemanager.core.FileKinds
-import org.openfilemanager.core.FileOpEngine
 import org.openfilemanager.core.FolderSort
 import org.openfilemanager.core.NameRules
-import org.openfilemanager.core.PathRedactor
 import org.openfilemanager.core.SearchEngine
 import org.openfilemanager.core.SafeRename
-import org.openfilemanager.core.SortDirectionCore
-import org.openfilemanager.core.SortFieldCore
-import org.openfilemanager.core.ZipEditException
 import org.openfilemanager.core.ZipLoad
 import org.openfilemanager.core.ZipModel
-import org.openfilemanager.core.ZipRewriter
-import org.openfilemanager.core.ZipSource
 
 /**
  * The only bridge between the Compose UI and :core / the existing services.
  * UI code never touches java.io.File listing, engines or services directly:
  * it reads [state] and calls the functions below.
  */
-class BrowserViewModel(app: Application) : AndroidViewModel(app) {
+class BrowserViewModel(app: Application) : AndroidViewModel(app), ArchiveBrowserController.Host {
     private val container = app.appContainer
     private val settings = container.settings
     val root: File = Environment.getExternalStorageDirectory()
@@ -82,20 +68,55 @@ class BrowserViewModel(app: Application) : AndroidViewModel(app) {
     private var pendingNav: Location? = null
     private val pendingSourceDeletes = ArrayList<String>()
 
+    // منسق عمليات الأرشيف — كان ~200 سطر مدمجاً هنا.
+    // zipTransfer يُعرَّف قبل archiveCtl لأن الأخير يستعمله في التهيئة.
+    private val zipTransfer = org.openfilemanager.app.usecase.ZipItemTransfer()
+    private val archiveCtl: ArchiveBrowserController = ArchiveBrowserController(
+        appContext = app,
+        scope = viewModelScope,
+        processScope = container.processScope,
+        opsCenter = container.opsCenter,
+        archiveService = container.archiveService,
+        zipTransfer = zipTransfer,
+        host = this
+    )
+    // منسق التسمية الجماعية — كان ~110 سطر مدمجاً هنا.
+    private val bulkRenameCtl: BulkRenameController by lazy {
+        BulkRenameController(viewModelScope, RenameCoordinator(container.opsCenter.journal), this)
+    }
+
+    // ---- ArchiveBrowserController.Host implementation ----
+    override fun archiveState() = ArchiveBrowserController.ArchiveState(zipFile, zipLoad, pendingNav, pendingSourceDeletes.toList())
+    override fun setZipLoad(value: ZipLoad?) { zipLoad = value }
+    override fun setZipFile(value: File?) { zipFile = value }
+    override fun setPendingNav(value: Location?) { pendingNav = value }
+    override fun setPendingSourceDeletes(value: List<String>) {
+        pendingSourceDeletes.clear()
+        pendingSourceDeletes.addAll(value)
+    }
+    override fun updateState(transform: (BrowserUiState) -> BrowserUiState) { _state.update(transform) }
+    override fun emit(event: UiEvent) { _events.tryEmit(event) }
+    override fun say(text: String) { _events.tryEmit(UiEvent.Message(text)) }
+    override fun sayErr(text: String) { _events.tryEmit(UiEvent.Message(text, SnackKind.ERROR)) }
+    override fun sayInfo(text: String) { _events.tryEmit(UiEvent.Message(text, SnackKind.INFO)) }
+    override fun sayResult(ok: Boolean, resId: Int) { _events.tryEmit(UiEvent.Message(str(resId), if (ok) SnackKind.SUCCESS else SnackKind.ERROR)) }
+    override fun str(resId: Int, vararg args: Any): String = getApplication<Application>().getString(resId, *args)
+    override fun reloadListing() = load()
+    override fun navigateTo(location: Location, force: Boolean) = navigate(location, force)
+    override fun clearSelection() { selectionAnchor = null; _state.update { it.copy(selection = emptySet()) } }
+    override fun appContext(): android.content.Context = getApplication()
+
     init {
         load()
         // Any finished copy/move/delete/extract refreshes the listing automatically.
         viewModelScope.launch { container.opsCenter.outcomes.collect { load() } }
-        // (F-14) عرض نتائج العمليات والاعتراف عليها انتقلا إلى حلقة العرض في
+        // عرض نتائج العمليات والاعتراف عليها انتقلا إلى حلقة العرض في
         // OfmApp: الإقرار كان يحدث هنا قبل التأكد من عرض Snackbar فعلاً فكانت
         // الرسالة تضيع بإعادة إنشاء الواجهة بين القول والإظهار.
         viewModelScope.launch(AppDispatchers.io) {
             runCatching { File(app.cacheDir, "zip_view").deleteRecursively() }
         }
-        // (سباق التحميل) القراءة المتزامنة عند البناء كانت تسبق تحميل DataStore
-        // أحياناً (preload يمنح سبقاً لا يضمنه) فيفتح المتصفح بالافتراضيات طول
-        // عمر ViewModel. بعد اكتمال التحميل تُطبَّق القيم ويُعاد العرض — إلا إن
-        // عدّل المستخدم خياراً قبل ذلك فلا تُداس تغييراته بالقيم المرصودة.
+        // (سباق التحميل) القراءة المتزامنة عند البناء كانت تسبق تحميل DataStore أحياناً (preload يمنح سبقاً لا يضمنه) فيفتح المتصفح بالافتراضيات طول عمر…
         viewModelScope.launch {
             runCatching { settings.ensureLoaded() }
             if (!userAdjustedOptions) {
@@ -105,12 +126,9 @@ class BrowserViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    // (F23) vararg Any مفروضة من توقيع getString نفسه (resources قياسي في Android
-    // يمررها للتنسيق)؛ لا يمكن تضييقها أكثر من هذا دون تكرار مساعد لكل نوع.
-    private fun str(id: Int, vararg args: Any): String = getApplication<Application>().getString(id, *args)
-    private fun say(text: String) { _events.tryEmit(UiEvent.Message(text)) }
-    private fun sayErr(text: String) { _events.tryEmit(UiEvent.Message(text, SnackKind.ERROR)) }
-    private fun sayInfo(text: String) { _events.tryEmit(UiEvent.Message(text, SnackKind.INFO)) }
+    // str/say/sayErr/sayInfo/sayResult أصبحت override للـ Host interface —
+    // يستعملها ArchiveBrowserController عبر host.* بدل تكرارها. والـ ViewModel نفسه
+    // يبقى يستعملها محلياً بنفس الأسماء.
     /** نجاح → أخضر، فشل → أحمر. */
     /**
      * Queues [request] with the operation service. The request file is written with fsync, so the
@@ -124,7 +142,7 @@ class BrowserViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    private fun sayResult(ok: Boolean, id: Int) { _events.tryEmit(UiEvent.Message(str(id), if (ok) SnackKind.SUCCESS else SnackKind.ERROR)) }
+    // sayResult أصبحت override للـ Host interface؛ لا حاجة لنسخة خاصة.
     /** For UI-side helpers (intents) that need to show a short message. */
     fun notify(text: String) = say(text)
 
@@ -144,9 +162,6 @@ class BrowserViewModel(app: Application) : AndroidViewModel(app) {
                 _state.update { cur ->
                     if (cur.location != snapshot.location) cur
                     else {
-                        // (المرحلة 5) فحص بقاء التحديد بفهرس O(1) لكل عنصر بدل
-                        // items.any (O(n) لكل عنصر محدد) — فرق ملموس في المجلدات
-                        // الكبيرة مع تحديد واسع.
                         val ids = items.mapTo(HashSet(items.size)) { it.id }
                         cur.copy(
                             items = items, loading = false, archiveTruncated = truncated,
@@ -158,20 +173,18 @@ class BrowserViewModel(app: Application) : AndroidViewModel(app) {
                 }
             }.onFailure {
                 _state.update { cur -> cur.copy(items = emptyList(), loading = false) }
-                sayErr(str(R.string.ui_err_read_folder))
+                val specific = if (FeatureFlags.archiveRejectionFeedback) ArchiveRejections.reasonOf(it) else null
+                sayErr(str(specific?.let(ArchiveRejections::messageRes) ?: R.string.ui_err_read_folder))
             }
         }
     }
 
     private fun listLocation(loc: Location, hidden: Boolean, sort: FolderSort): Pair<List<FileItem>, Boolean> = when (loc) {
         is Location.Dir -> {
-            // (F-15) القراءة عبر طبقة التخزين الموحدة StorageRepository لا
-            // File.listFiles مباشرة: خصائص واحدة لكل عنصر، وتخطي الروابط
-            // الرمزية، وتمييز «تعذر التعداد» عن «المجلد فارغ» (F-11) — الفشل
-            // يرمي فيصير رسالة خطأ للمستخدم بدل قائمة فارغة صامتة.
+            // القراءة عبر طبقة التخزين الموحدة StorageRepository لا File.listFiles مباشرة: خصائص واحدة لكل عنصر، وتخطي الروابط الرمزية، وتمييز «تعذر التعداد» عن…
             val entries = container.storage.list(BrowserLocation(loc.dir.toPath()))
                 ?: throw java.io.IOException("unreadable directory: ${loc.dir}")
-            sorted(entries
+            sortedFileItems(entries
                 .filter { hidden || !it.name.startsWith(".") }
                 .map { f ->
                     FileItem(
@@ -179,18 +192,18 @@ class BrowserViewModel(app: Application) : AndroidViewModel(app) {
                         size = if (f.isDirectory) -1L else f.size, modified = f.modified,
                         kind = if (f.isDirectory) null else FileKinds.of(f.name), path = f.path.toString()
                     )
-                }, sort) to false
+                }, sort, settings.foldersFirst) to false
         }
         is Location.Archive -> {
             val zip = if (isZip(loc.file)) ensureZip(loc.file) else null
             if (zip != null) {
-                sorted(zip.children(loc.inner).map { e ->
+                sortedFileItems(zip.children(loc.inner).map { e ->
                     FileItem(
                         id = (if (e.isDirectory) "d:" else "f:") + e.name, name = e.baseName, isDir = e.isDirectory,
                         size = if (e.isDirectory) -1L else e.size, modified = e.modifiedAt,
                         kind = if (e.isDirectory) null else FileKinds.of(e.baseName), path = null, entry = e.name
                     )
-                }, sort) to false
+                }, sort, settings.foldersFirst) to false
             } else {
                 val listing = ArchiveInspector.list(loc.file.toPath())
                 val children = LinkedHashMap<String, FileItem>()
@@ -212,7 +225,7 @@ class BrowserViewModel(app: Application) : AndroidViewModel(app) {
                         children["f:$name"] = FileItem("f:$name", seg, false, e.size, modified, FileKinds.of(seg), null, name)
                     }
                 }
-                sorted(children.values.toList(), sort) to listing.truncated
+                sortedFileItems(children.values.toList(), sort, settings.foldersFirst) to listing.truncated
             }
         }
     }
@@ -226,22 +239,6 @@ class BrowserViewModel(app: Application) : AndroidViewModel(app) {
             zipLoad = runCatching { ZipModel.load(file.toPath()) }.getOrNull()
         }
         return zipLoad?.model
-    }
-
-    private fun sorted(items: List<FileItem>, sort: FolderSort): List<FileItem> {
-        val base: Comparator<FileItem> = when (sort.field) {
-            SortFieldCore.NAME -> Comparator { a, b -> naturalCompare(a.name, b.name) }
-            SortFieldCore.SIZE -> compareBy { it.size }
-            SortFieldCore.MODIFIED -> compareBy { it.modified }
-            SortFieldCore.TYPE -> Comparator { a, b ->
-                val ea = a.name.substringAfterLast('.', "").lowercase()
-                val eb = b.name.substringAfterLast('.', "").lowercase()
-                ea.compareTo(eb).takeIf { it != 0 } ?: naturalCompare(a.name, b.name)
-            }
-        }
-        val ordered = if (sort.direction == SortDirectionCore.DESCENDING) base.reversed() else base
-        return if (settings.foldersFirst) items.sortedWith(compareByDescending<FileItem> { it.isDir }.then(ordered))
-        else items.sortedWith(ordered)
     }
 
     // ---------- navigation ----------
@@ -303,13 +300,13 @@ class BrowserViewModel(app: Application) : AndroidViewModel(app) {
     fun setSort(sort: FolderSort) {
         userAdjustedOptions = true
         settings.defaultSort = sort
-        // (تصحيح) الترتيب الجديد يُطبَّق أيضاً على نتائج البحث المعروضة، وإلا بقيت
+        // الترتيب الجديد يُطبَّق أيضاً على نتائج البحث المعروضة، وإلا بقيت
         // بترتيبها القديم حتى إعادة البحث.
         _state.update {
             it.copy(
                 sort = sort,
-                items = sorted(it.items, sort),
-                searchHits = it.searchHits?.let { h -> sorted(h, sort) }
+                items = sortedFileItems(it.items, sort, settings.foldersFirst),
+                searchHits = it.searchHits?.let { h -> sortedFileItems(h, sort, settings.foldersFirst) }
             )
         }
     }
@@ -356,7 +353,7 @@ class BrowserViewModel(app: Application) : AndroidViewModel(app) {
             }
             _state.update { cur ->
                 if (cur.query?.trim() != text) cur
-                else cur.copy(searchHits = sorted(hits, cur.sort), searchBusy = false, searchTruncated = report.truncated, searchErrors = report.errors)
+                else cur.copy(searchHits = sortedFileItems(hits, cur.sort, settings.foldersFirst), searchBusy = false, searchTruncated = report.truncated, searchErrors = report.errors)
             }
         }
     }
@@ -390,7 +387,7 @@ class BrowserViewModel(app: Application) : AndroidViewModel(app) {
         selectionAnchor = id
     }
     fun selectAll() = _state.update { it.copy(selection = it.visibleItems.mapTo(HashSet()) { i -> i.id }) }
-    fun clearSelection() { selectionAnchor = null; _state.update { it.copy(selection = emptySet()) } }
+    // clearSelection انتقل إلى override fun clearSelection() في قسم Host أعلاه.
 
     private fun selectedItems(): List<FileItem> = _state.value.let { s -> s.visibleItems.filter { it.id in s.selection } }
 
@@ -467,178 +464,46 @@ class BrowserViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     // ---------- bulk rename (one engine for preview and execution: BatchRename.plan) ----------
+    // كل عمليات التسمية الجماعية مفوّضة إلى BulkRenameController — كانت ~110 سطر هنا.
 
-    /** Last successful on-disk bulk rename, kept so [undoBulkRename] can reverse it. */
-    private var lastBulkRename: List<RenameStep>? = null
+    // zipTransfer انتقل إلى أعلى (قبل archiveCtl) لتفادي مشكلة التهيئة.
 
     /** The selected items in the order currently shown (the numbering follows this order). */
     private fun orderedSelection(): List<FileItem> =
         _state.value.let { s -> s.visibleItems.filter { it.id in s.selection } }
 
     /** Inputs + existing names for the dialog's preview. Null when the location can't be bulk-renamed. */
-    suspend fun bulkRenameContext(): BulkRenameContext? = withContext(AppDispatchers.io) {
-        val items = orderedSelection()
-        if (items.size < 2) return@withContext null
-        when (val loc = _state.value.location) {
-            is Location.Dir -> {
-                val existing = loc.dir.list()?.toList() ?: return@withContext null
-                BulkRenameContext(items.map { RenameInput(it.name, it.isDir) }, existing, strictFat = true)
-            }
-            is Location.Archive -> {
-                val model = zipLoad?.model ?: return@withContext null
-                BulkRenameContext(
-                    items.map { RenameInput(it.name, it.isDir) },
-                    model.children(loc.inner).map { it.baseName }, strictFat = false
-                )
-            }
-        }
+    suspend fun bulkRenameContext(): BulkRenameContext? {
+        return bulkRenameCtl.bulkRenameContext(orderedSelection(), _state.value.location, zipLoad?.model)
     }
 
     fun bulkRename(spec: BatchRenameSpec) {
-        val items = orderedSelection()
-        if (items.size < 2) return
-        val loc = _state.value.location
-        if (loc is Location.Archive) { bulkRenameArchive(items, spec, loc); return }
-        val dir = (loc as? Location.Dir)?.dir ?: return
-        viewModelScope.launch {
-            val attempt = withContext(AppDispatchers.io) {
-                runCatching {
-                    // Same engine as the preview, re-run against the folder as it is right now.
-                    val plan = BatchRename.plan(items.map { RenameInput(it.name, it.isDir) }, spec, dir.list()?.toList().orEmpty())
-                    if (!plan.canApply) return@runCatching null
-                    val steps = RenameEngine.plan(dir.toPath(), plan.renames())
-                    val outcome = RenameEngine.execute(steps) { _, _ -> }
-                    when (outcome) {
-                        // (خصوصية) أسماء الملفات لا تُدوَّن نصاً صريحاً (تعمية
-                        // المسارات لا تغطي اسماً مجرداً بلا مسار): العدد ورمز
-                        // المجلد يكفيان للتشخيص دون كشف أسماء المستخدم.
-                        is RenameOutcome.Success -> {
-                            AppLog.i("rename", "bulk rename ${steps.size} in ${PathRedactor.token(dir.path)}"); steps
-                        }
-                        is RenameOutcome.Failure -> {
-                            AppLog.e("rename", "bulk rename failed in ${PathRedactor.token(dir.path)} (rolledBack=${outcome.rolledBack})", outcome.cause)
-                            emptyList<RenameStep>()
-                        }
-                    }
-                }
-            }
-            val result = attempt.getOrNull()
-            when {
-                attempt.isFailure -> sayErr(str(R.string.ui_bulk_failed, items.size))
-                result == null -> sayErr(str(R.string.ui_bulk_blocked))
-                result.isEmpty() -> sayErr(str(R.string.ui_bulk_failed, items.size))
-                else -> {
-                    lastBulkRename = result
-                    _events.tryEmit(UiEvent.RenameDone(str(R.string.ui_renamed_n, result.size, items.size)))
-                }
-            }
-            clearSelection()
-            load()
-        }
+        bulkRenameCtl.bulkRename(orderedSelection(), spec, _state.value.location, zipLoad?.model)
     }
 
-    private fun bulkRenameArchive(items: List<FileItem>, spec: BatchRenameSpec, loc: Location.Archive) {
-        val model = zipLoad?.model
-        if (model == null) { sayErr(str(R.string.ui_err_readonly_archive)); return }
-        viewModelScope.launch {
-            val done = withContext(AppDispatchers.io) {
-                runCatching {
-                    val plan = BatchRename.plan(
-                        items.map { RenameInput(it.name, it.isDir) }, spec,
-                        model.children(loc.inner).map { it.baseName }, strictFat = false
-                    )
-                    if (!plan.canApply) return@runCatching -1
-                    val entryOf = items.associate { it.name to it.entry }
-                    // اسم في الخطة بلا مدخل أرشيف مقابل = خطة غير صالحة: رسالة واضحة بدل انهيار.
-                    val resolved = plan.renames().map { (old, new) -> (entryOf[old] ?: return@runCatching -1) to new }
-                    model.renameBatch(resolved)
-                }
-            }
-            val n = done.getOrNull()
-            when {
-                n == null -> sayErr(editErrorText(done.exceptionOrNull() ?: IllegalStateException()))
-                n < 0 -> sayErr(str(R.string.ui_bulk_blocked))
-                else -> say(str(R.string.ui_renamed_n, n, items.size))
-            }
-            clearSelection()
-            load()
-        }
-    }
-
-    /** Reverses the last on-disk bulk rename (two-phase, never overwriting). */
+    /** Reverses the last on-disk bulk rename (two-phase, never overwriting),
+     *  journalled like the forward path so an abrupt kill mid-undo is recoverable (E1). */
     fun undoBulkRename() {
-        val steps = lastBulkRename ?: return
-        lastBulkRename = null
-        viewModelScope.launch {
-            val ok = withContext(AppDispatchers.io) {
-                RenameEngine.execute(RenameEngine.undoSteps(steps)) is RenameOutcome.Success
-            }
-            sayResult(ok, if (ok) R.string.ui_undone else R.string.ui_err_rename)
-            load()
-        }
+        bulkRenameCtl.undoBulkRename()
     }
 
     /** Extract one entry to cache (never next to the archive) and ask the UI to open it. */
     fun openArchiveEntry(item: FileItem) {
         val loc = _state.value.location as? Location.Archive ?: return
-        val entry = item.entry ?: return
-        sayInfo(str(R.string.ui_extracting))
-        val model = zipLoad?.model
-        viewModelScope.launch {
-            val file = withContext(AppDispatchers.io) {
-                val dest = File(getApplication<Application>().cacheDir, "zip_view/${System.nanoTime()}").also { it.mkdirs() }
-                if (model != null) {
-                    runCatching {
-                        val target = File(dest, item.name)
-                        when (val src = model.get(entry)?.source) {
-                            is ZipSource.Original -> ZipRewriter.extractOne(model.archive, src.name, target.toPath())
-                            is ZipSource.External -> java.nio.file.Files.copy(src.path, target.toPath())
-                            else -> return@runCatching null
-                        }
-                        target
-                    }.getOrNull()
-                } else {
-                    val r = container.archiveService.extract(loc.file, dest, filter = EntryFilter.only(setOf(entry)))
-                    if (r is ExtractOutcome.Done) {
-                        File(r.folder, entry).takeIf { it.isFile }
-                            ?: r.folder.walkTopDown().firstOrNull { it.isFile && it.name == item.name }
-                    } else null
-                }
-            }
-            if (file != null) _events.tryEmit(UiEvent.OpenExtracted(file.absolutePath, if (model != null) entry else null))
-            else sayErr(str(R.string.ui_err_open_entry))
-        }
+        archiveCtl.openArchiveEntry(item, loc)
     }
 
     // ---------- editing the open ZIP (all in memory until saved) ----------
-
-    private fun editErrorText(t: Throwable): String = str(
-        when ((t as? ZipEditException)?.reason) {
-            ZipEditException.Reason.EXISTS -> R.string.ui_err_exists
-            ZipEditException.Reason.INVALID_NAME -> R.string.ui_err_bad_name
-            ZipEditException.Reason.INTO_ITSELF -> R.string.ui_err_into_itself
-            else -> R.string.ui_err_edit
-        }
-    )
-
-    private fun editArchive(block: (ZipModel) -> Unit) {
-        val model = zipLoad?.model ?: return
-        viewModelScope.launch {
-            val err = withContext(AppDispatchers.io) { runCatching { block(model) }.exceptionOrNull() }
-            if (err != null) sayErr(editErrorText(err))
-            _state.update { it.copy(selection = emptySet()) }
-            load()
-        }
-    }
+    // كل عمليات الأرشيف مفوّضة إلى ArchiveBrowserController — كانت ~200 سطر هنا.
 
     fun archiveDelete() {
         val names = selectedItems().mapNotNull { it.entry }
-        if (names.isNotEmpty()) editArchive { it.delete(names) }
+        archiveCtl.archiveDelete(names)
     }
 
     fun archiveRename(item: FileItem, newName: String) {
         val entry = item.entry ?: return
-        editArchive { it.rename(entry, newName) }
+        archiveCtl.archiveRename(entry, newName)
     }
 
     /** Creates an empty file or a folder in the current location (a normal folder or an open ZIP). */
@@ -664,12 +529,13 @@ class BrowserViewModel(app: Application) : AndroidViewModel(app) {
                 if (folder) { archiveMkdir(name); return }
                 if (NameRules.problem(name, strictFat = false) != null) { sayErr(str(R.string.ui_err_bad_name)); return }
                 // The empty file must stay on disk until the archive is saved (the model reads it then).
-                editArchive { m ->
+                val inner = loc.inner
+                archiveCtl.editArchive { m ->
                     val dir = File(getApplication<Application>().cacheDir, "zip_view/new/${System.nanoTime()}")
                     dir.mkdirs()
                     val f = File(dir, name)
                     f.createNewFile()
-                    m.add(loc.inner, f.toPath())
+                    m.add(inner, f.toPath())
                 }
             }
         }
@@ -677,152 +543,39 @@ class BrowserViewModel(app: Application) : AndroidViewModel(app) {
 
     fun archiveMkdir(name: String) {
         val inner = (_state.value.location as? Location.Archive)?.inner ?: return
-        editArchive { it.mkdir(inner, name) }
+        archiveCtl.archiveMkdir(inner, name)
     }
 
     /** The user saved an edited entry from the text editor: swap its content in the model. */
     fun replaceArchiveEntry(entry: String, edited: String) {
-        editArchive { it.replaceFile(entry, File(edited).toPath()) }
-        say(str(R.string.ui_entry_updated))
+        archiveCtl.replaceArchiveEntry(entry, edited)
     }
 
     private fun pasteIntoArchive(clip: Clipboard, loc: Location.Archive) {
-        if (zipLoad?.model == null) { sayErr(str(R.string.ui_err_readonly_archive)); return }
-        if (clip.archive != null) {
-            if (File(clip.archive) != loc.file) { sayErr(str(R.string.ui_err_other_archive)); return }
-            editArchive { it.transfer(clip.paths, loc.inner, copy = !clip.move) }
-        } else {
-            editArchive { m -> clip.paths.forEach { m.add(loc.inner, File(it).toPath()) } }
-            if (clip.move) pendingSourceDeletes += clip.paths // originals are removed only after a successful save
-        }
-        _state.update { it.copy(clipboard = null) }
+        archiveCtl.pasteIntoArchive(clip, loc)
     }
 
-    /**
-     * نسخ/نقل عناصر من أرشيف إلى مجلد على القرص. الاستخراج يمر عبر خدمة العمليات
-     * (F7: تقدم من الإشعار، إلغاء، سجل واسترداد، وسياسة تعارض موحّدة)؛ خطوة
-     * «النقل» الإضافية — حذف العناصر من ملف الأرشيف بعد نجاح الاستخراج — تُنفَّذ
-     * في نطاق الحاوية الذي يعيش مع العملية، لا viewModelScope الذي يُقتل مع
-     * مغادرة الشاشة فتنقطع إعادة كتابة الأرشيف في منتصفها.
-     *
-     * حدود الخطوة (موثّقة بصدق): حذف العناصر من الأرشيف يعيش مع العملية فقط —
-     * قتل العملية قبل اكتماله يترك الأرشيف كاملًا والعناصر منسوخة (وضع فشل
-     * آمن: لا يضيع ملف)، ويمكن إعادته بلصق «نقل» جديد. الاشتراك في النتائج
-     * يسبق الجدولة عمداً: outcomes بلا replay، ولو انبعثت النتيجة قبل الاشتراك
-     * فوُتت، فنضمن الترتيب: مشغّل المُجمّع ثم enqueue. (تحديث) انتظار النتيجة
-     * محدود بمهلة: موت الخدمة قبل بث النتيجة كان يعلّق الكوروتين إلى الأبد.
-     */
     private fun pasteArchiveToDisk(clip: Clipboard, dest: File) {
-        val archive = File(clip.archive ?: return)
-        val opId = FileOpEngine.newOpId()
-        if (clip.move) {
-            // «نقل»: اشتراك أولًا، ثم حذف العناصر من ملف الأرشيف بعد نجاح الاستخراج.
-            container.processScope.launch {
-                val outcome = kotlinx.coroutines.withTimeoutOrNull(OUTCOME_WAIT_MS) {
-                    container.opsCenter.outcomes
-                        .filter { it.opId == opId && it.failed == 0 && it.ok > 0 }
-                        .first()
-                }
-                if (outcome == null) {
-                    AppLog.i("archive", "لم تُرصد نتيجة الاستخراج $opId (مهلة/موت الخدمة)؛ خطوة حذف العناصر من الأرشيف تُترك للمستخدم")
-                    return@launch
-                }
-                val err = withContext(AppDispatchers.io) {
-                    runCatching {
-                        val m = ZipModel.load(archive.toPath()).model
-                            ?: throw ZipEditException(ZipEditException.Reason.UNSUPPORTED, "read-only archive")
-                        m.delete(clip.paths)
-                        ZipRewriter.write(m)
-                    }.exceptionOrNull()
-                }
-                if (err != null) AppLog.e("archive", "تعذر حذف العناصر المنقولة من الأرشيف", err)
-                load()
-            }
-        }
-        val queued = FileOperationService.enqueue(
-            getApplication(),
-            OpRequest.Extract(archive.toPath(), dest.toPath(), Charsets.UTF_8.name(), clip.paths.toList(), opId, placeDirectly = true)
-        )
-        if (!queued) return
-        _state.update { it.copy(clipboard = null) }
-        sayResult(queued, if (queued) R.string.ui_op_queued else R.string.ui_op_queue_failed)
+        archiveCtl.pasteArchiveToDisk(clip, dest)
     }
 
     /** Writes the edits into the archive (temp file, verify, atomic replace), then continues any pending navigation. */
     fun saveArchive() {
-        val model = zipLoad?.model ?: return
-        _state.update { it.copy(saving = true, askSave = false) }
-        sayInfo(str(R.string.ui_saving))
-        viewModelScope.launch {
-            val err = withContext(AppDispatchers.io) { runCatching { ZipRewriter.write(model) }.exceptionOrNull() }
-            if (err == null) {
-                zipLoad = runCatching { ZipModel.load(model.archive) }.getOrNull()
-                val gone = pendingSourceDeletes.map { File(it).toPath() }
-                pendingSourceDeletes.clear()
-                if (gone.isNotEmpty()) FileOperationService.enqueue(getApplication(), OpRequest.Delete(gone))
-                say(str(R.string.ui_archive_saved))
-            } else {
-                AppLog.e("archive", "تعذر حفظ الأرشيف", err)
-                val reason = err.message?.takeIf { it.isNotBlank() } ?: err.javaClass.simpleName
-                sayErr(str(R.string.ui_err_archive_save_reason, reason))
-            }
-            _state.update { it.copy(saving = false) }
-            val next = pendingNav
-            pendingNav = null
-            if (err == null && next != null) navigate(next, force = true) else load()
-        }
+        archiveCtl.saveArchive()
     }
 
     fun discardArchiveChanges() {
-        val next = pendingNav
-        pendingNav = null
-        zipFile = null; zipLoad = null
-        pendingSourceDeletes.clear()
-        _state.update { it.copy(askSave = false, clipboard = it.clipboard?.takeIf { c -> c.archive == null }) }
-        if (next != null) navigate(next, force = true) else load()
+        archiveCtl.discardArchiveChanges()
     }
 
     fun cancelAskSave() {
-        pendingNav = null
-        _state.update { it.copy(askSave = false) }
+        archiveCtl.cancelAskSave()
     }
 
-    /**
-     * استخراج الأرشيف المحدد (كله أو العناصر المحددة) بجواره — عبر خدمة العمليات
-     * (F7): تقدم من الإشعار، إلغاء فوري، سجل واسترداد بعد قتل العملية، وسياسة
-     * تعارض موحّدة، بدل viewModelScope الذي يُقتل مع مغادرة الشاشة.
-     */
     fun extractHere(archive: File, entries: Set<String>?) {
-        val dest = archive.parentFile ?: return
-        val selected = entries?.toList()
-        enqueueAsync(OpRequest.Extract(archive.toPath(), dest.toPath(), Charsets.UTF_8.name(), selected)) { clearSelection() }
+        archiveCtl.extractHere(archive, entries)
     }
 
     fun selectedArchiveEntries(): Set<String> =
         selectedItems().mapNotNull { it.entry }.toSet()
 }
-
-/** "2.jpg" < "10.jpg": digit runs compare as numbers, everything else case-insensitively. */
-internal fun naturalCompare(a: String, b: String): Int {
-    var i = 0; var j = 0
-    while (i < a.length && j < b.length) {
-        val ca = a[i]; val cb = b[j]
-        if (ca.isDigit() && cb.isDigit()) {
-            var ie = i; while (ie < a.length && a[ie].isDigit()) ie++
-            var je = j; while (je < b.length && b[je].isDigit()) je++
-            val na = a.substring(i, ie).trimStart('0'); val nb = b.substring(j, je).trimStart('0')
-            if (na.length != nb.length) return na.length - nb.length
-            val c = na.compareTo(nb)
-            if (c != 0) return c
-            i = ie; j = je
-        } else {
-            val c = ca.lowercaseChar().compareTo(cb.lowercaseChar())
-            if (c != 0) return c
-            i++; j++
-        }
-    }
-    return (a.length - i) - (b.length - j)
-}
-
-/** مهلة انتظار نتيجة عملية وُعدت من الخدمة (خطوة «النقل» من الأرشيف). */
-private const val OUTCOME_WAIT_MS = 20L * 60 * 1000

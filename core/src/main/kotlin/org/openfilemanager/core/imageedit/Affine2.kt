@@ -3,16 +3,7 @@ package org.openfilemanager.core.imageedit
 import kotlin.math.cos
 import kotlin.math.sin
 
-/**
- * تحويل خطي ثنائي الأبعاد (Affine) خالص بلا أي اعتماد على أندرويد، حتى تُختبر
- * رياضيات المحرّر على JVM مباشرة. التمثيل بنظام المتجه-العمود:
- *
- *     x' = a*x + c*y + tx
- *     y' = b*x + d*y + ty
- *
- * نفس ترتيب قيم android.graphics.Matrix (MSCALE_X, MSKEW_X, MTRANS_X, MSKEW_Y,
- * MSCALE_Y, MTRANS_Y) لذا تُحوَّل المصفوفة إلى أندرويد بلا أي إعادة ترتيب.
- */
+/** تحويل خطي ثنائي الأبعاد (Affine) خالص بلا أي اعتماد على أندرويد، حتى تُختبر رياضيات المحرّر على JVM مباشرة. */
 data class Affine2(
     val a: Float, val b: Float,
     val c: Float, val d: Float,

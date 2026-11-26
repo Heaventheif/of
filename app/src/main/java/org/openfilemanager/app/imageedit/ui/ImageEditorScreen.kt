@@ -87,11 +87,11 @@ import java.io.File
 import org.openfilemanager.app.BidiText
 import org.openfilemanager.app.R
 import org.openfilemanager.app.imageedit.ImageEditorViewModel
-import org.openfilemanager.app.imageedit.ImageEditorViewModel.EditorEvent
+import org.openfilemanager.app.imageedit.EditorEvent
+import org.openfilemanager.app.imageedit.EditorUiState
 import org.openfilemanager.app.imageedit.engine.ImageExporter
 import org.openfilemanager.app.imageedit.model.EditorTool
 import org.openfilemanager.app.imageedit.model.ExportFormat
-import org.openfilemanager.app.imageedit.model.isEditableImage
 import org.openfilemanager.app.ui.LocalSnack
 import org.openfilemanager.app.ui.components.ActionSheet
 import org.openfilemanager.app.ui.components.SheetAction
@@ -159,7 +159,7 @@ fun ImageEditorScreen(path: String, onBack: () -> Unit, onSaved: () -> Unit = {}
         )
     }
 
-    // (تصحيح) imePadding على الجذر كله (لا على اللوحة وحدها): القماش يأخذ ما يتبقى فوق لوحة
+    // imePadding على الجذر كله (لا على اللوحة وحدها): القماش يأخذ ما يتبقى فوق لوحة
     // المفاتيح، وارتفاع لوحة الأداة يُقيَّد بنسبة من الشاشة فلا تبتلع الصورة أبداً.
     BoxWithConstraints(
         Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)
@@ -187,7 +187,7 @@ fun ImageEditorScreen(path: String, onBack: () -> Unit, onSaved: () -> Unit = {}
                 maxLines = 1, overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f)
             )
-    // (تحسين) مقارنة قبل/بعد: عرض الأصل طوال الضغط على الزر بلا لمسة إضافية
+    // مقارنة قبل/بعد: عرض الأصل طوال الضغط على الزر بلا لمسة إضافية
             val comparePress = remember { MutableInteractionSource() }
             val comparing by comparePress.collectIsPressedAsState()
             LaunchedEffect(comparing) { vm.setShowOriginal(comparing) }
@@ -263,7 +263,7 @@ fun ImageEditorScreen(path: String, onBack: () -> Unit, onSaved: () -> Unit = {}
                     val selected = state.tool == tool
                     val tint = if (selected) MaterialTheme.colorScheme.primary
                     else MaterialTheme.colorScheme.onSurfaceVariant
-                    // (تحسين) أيقونة وعنوانها تحته: يعرف المستخدم الأداة دون تخمين معنى الأيقونة
+                    // أيقونة وعنوانها تحته: يعرف المستخدم الأداة دون تخمين معنى الأيقونة
                     Column(
                         Modifier
                             .widthIn(min = 60.dp)
@@ -408,7 +408,7 @@ private fun PanelHandle(open: Boolean, onOpenChange: (Boolean) -> Unit) {
 private val replaceableFormats = setOf("jpg", "jpeg", "png", "webp")
 
 /** أبعاد الصورة الناتجة (بعد القصّ والتدوير) عند نسبة تصغير [scale]. */
-private fun exportSizeOf(state: ImageEditorViewModel.EditorUiState, scale: Float): Pair<Int, Int> {
+private fun exportSizeOf(state: EditorUiState, scale: Float): Pair<Int, Int> {
     val (pw, ph) = state.transform.preCropSize(state.docW, state.docH)
     val crop = state.transform.crop
     val w = (crop?.width ?: pw) * scale
@@ -416,7 +416,7 @@ private fun exportSizeOf(state: ImageEditorViewModel.EditorUiState, scale: Float
     return maxOf(1, w.roundToInt()) to maxOf(1, h.roundToInt())
 }
 
-private fun fullCropRectOf(state: ImageEditorViewModel.EditorUiState): FloatRect {
+private fun fullCropRectOf(state: EditorUiState): FloatRect {
     val (w, h) = state.transform.preCropSize(state.docW, state.docH)
     return FloatRect.xywh(0f, 0f, w, h)
 }

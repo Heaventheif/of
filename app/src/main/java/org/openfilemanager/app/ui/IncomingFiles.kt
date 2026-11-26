@@ -13,12 +13,6 @@ object IncomingFiles {
     private const val MAX_FILES = 50
     private const val MAX_BYTES = 512L * 1024 * 1024
 
-    /**
-     * (المرحلة 6) حد إجمالي لكل مجلدات الاستقبال في الكاش، لا لكل طلب فقط:
-     * المشاركات المتتالية كانت تتراكم حتى 512MB لكل منها ولا يوجد إلا تنظيف
-     * العمر (24 ساعة). عند تجاوز الإجمالي تُحذف الأقدم أولاً حتى يعود الإجمالي
-     * تحت الحد، فلا يستهلك الاستقبال المتكرر مساحة التخزين بلا ضابط.
-     */
     private const val TOTAL_CACHE_BUDGET = 2L * 1024 * 1024 * 1024
 
     @Suppress("DEPRECATION")
@@ -35,13 +29,7 @@ object IncomingFiles {
         return found.values.toList()
     }
 
-    /**
-     * (مراجعة 0.8.6-#1) النشاط مُصدَّر ويقبل VIEW/SEND بـ file://، فأي تطبيق
-     * يستطيع أن يجعلنا ننسخ أي ملف مقروء إلى الكاش. file:// يُقبل الآن فقط من
-     * مخازن المشاركة (/storage/…) ولا يجوز أن يرتاد خاصية التطبيق (كاش/ملفات/
-     * بيانات) — إغلاق «الوكيل المشوش» الذي كان يتيح نسخ مجلة العمليات أو
-     * الإعدادات إلى الكاش. content:// يبقى الطريق الطبيعي للبقية.
-     */
+    /** (مراجعة 0.8.6-#1) النشاط مُصدَّر ويقبل VIEW/SEND بـ file://، فأي تطبيق يستطيع أن يجعلنا ننسخ أي ملف مقروء إلى الكاش. */
     fun isSharedStoragePath(path: String): Boolean = path.startsWith("/storage/")
 
     /** صحّة منطقية خالصة للاختبار: هل [path] داخل أحد الجذور الخاصة (حدود شاملة للنهاية، لا بادئات خادعة)؟ */
@@ -98,9 +86,6 @@ object IncomingFiles {
         // فأمسح الأقدم بدل أن يفشل هذا الطلب أو يفيض التخزين.
         enforceTotalBudget(ctx, extraBytes = 0L)
         val dir = File(ctx.cacheDir, "incoming_${UUID.randomUUID()}").also { if (!it.mkdirs()) throw IOException("cache") }
-        // (F-09) فشل أي مرحلة نسخ (قراءة URI، تجاوز الحجم، I/O) ينظف مجلد المرحلة
-        // كله: كان الاستثناء يخرج قبل الوصول إلى return فتبقى ملفات استقبال
-        // جزئية (حتى 512MB لكل مشاركة) في الانتظار حتى تنظيف العمر بعد 24 ساعة.
         try {
             var total = 0L
             val out = ArrayList<File>()
@@ -119,13 +104,11 @@ object IncomingFiles {
                         s.substring(0, end).ifEmpty { "file" }
                     }
                     .let { if (it == "." || it == "..") "file" else it }
-                var target = File(dir, safe)
-                var n = 1
-                // Dotfiles (".gitignore") keep their whole name as the stem
-                val dot = safe.lastIndexOf('.').takeIf { it > 0 }
-                val stem = if (dot != null) safe.substring(0, dot) else safe
-                val ext = if (dot != null) safe.substring(dot) else ""
-                while (target.exists() && n <= 100_000) target = File(dir, "$stem ($n)$ext").also { n++ }
+                // توحيد الاسم الفريد عبر NameRules.uniqueName — كان مكرراً.
+                // Dotfiles (".gitignore") keep their whole name as the stem: نفس سلوك
+                // NameRules (dot > 0 لا dot == 0).
+                val unique = org.openfilemanager.core.NameRules.uniqueName(safe) { c -> File(dir, c).exists() }
+                val target = File(dir, unique)
                 val input = when (uri.scheme) {
                     "content" -> ctx.contentResolver.openInputStream(uri)
                     "file" -> uri.path?.takeIf { p ->
@@ -147,10 +130,7 @@ object IncomingFiles {
                 }
                 out += target
             }
-            // الحد الإجمالي بعد النسخ أيضاً: هذا الطلب وحده قد يجاوز الميزانية
-            // إن كانت المشاركة ضخمة؛ يُحذف الأقدم قبله (المجلد الجديد محسوب
-            // أصلاً في المجموع، فلا يُحسب مرتين).
-            // (F-new) المجلد الحالي مستثنى من الحذف: لا نُرجع مسارات محذوفة.
+            // الحد الإجمالي بعد النسخ أيضاً: هذا الطلب وحده قد يجاوز الميزانية إن كانت المشاركة ضخمة؛
             if (total > TOTAL_CACHE_BUDGET) throw IOException("size")
             enforceTotalBudget(ctx, extraBytes = total, keep = dir)
             return out

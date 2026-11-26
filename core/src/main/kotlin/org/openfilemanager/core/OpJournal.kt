@@ -2,7 +2,6 @@ package org.openfilemanager.core
 
 import java.io.IOException
 import java.nio.charset.StandardCharsets
-import java.nio.file.FileSystems
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardOpenOption
@@ -34,20 +33,9 @@ data class OpRecord(
     val totalBytes: Long = 0,
     val message: String = ""
 ) {
-    /** عملية كتابة على الملفات (تحتاج طابور الوحدة في الخدمة). */
-    val isWrite: Boolean get() = kind != OpKind.EXTRACT && kind != OpKind.COMPRESS
 }
 
-/**
- * عنصر عمل قابل للاستئناف. المعنى بحسب النوع:
- * - FILE: [src] الملف المصدر و[dst] الوجهة النهائية و[extra] مساره النسبي داخل مجموعته و[extra2] الملف المؤقت المسجل.
- * - DIR_CREATE: [dst] المجلد المطلوب إنشاؤه و[extra] "" إن كان جذر المجموعة أو مساره النسبي.
- * - TREE_MOVE / TREE_DELETE: [src] جذر الشجرة و[dst] الوجهة (للنقل).
- * - RENAME (عبر JournalRenameAdapter): [src] الاسم القديم و[extra] المؤقت و[dst] النهائي.
- *
- * [group] رقم مجموعة العنصر (كل مصدر مستوى أعلى ومحتواه مجموعة واحدة):
- * قرار تعارض جذر المجموعة (استبدال/إبقاء الاثنين/تخطي) يسري عليها كلها.
- */
+/** عنصر عمل قابل للاستئناف. */
 data class OpItemRecord(
     val opId: String,
     val index: Int,
@@ -62,14 +50,7 @@ data class OpItemRecord(
     val group: Int = 0
 )
 
-/**
- * سجل العمليات الطويلة. بديل Room عمداً: منطق صرف في :core يُختبر على JVM،
- * بلا معالج تعليقات ولا اعتماد أندرويد، وبنفس الدلالة: عند الإقلاع تُستخرج العمليات
- * غير المنتهية فيُحذف ما تبقى من ملفات مؤقتة ويُعرض على المستخدم الإكمال أو الإلغاء.
- *
- * الصيغة: ملف لكل عملية، سطور مُلحقة فقط (append-only) — آخر سطر لعنصر ما هو حالته،
- * والسطر الأخير غير المكتمل (انهيار أثناء الكتابة) يُتجاهل عند القراءة.
- */
+/** سجل العمليات الطويلة. */
 interface OpJournal {
     fun startOp(record: OpRecord, items: List<OpItemRecord>)
     /**
@@ -125,16 +106,7 @@ internal object Tsv {
     }
 }
 
-/** سجل ملفات: مجلد يحوي ملف `op-<id>.log` لكل عملية. آمن للاستخدام من عدة خيوط.
- *
- *  فهرس في الذاكرة لكل عملية جارية (itemIndex): `updateItem` كانت تعيد قراءة
- *  الملف كله وتحلله في كل تحديث (نسخ 50 ألف ملف ≈ 100 ألف تحليل كامل)،
- *  فصار التحديث بحثاً في الخريطة + إلحاق سطر واحد. الفهرس يُنشأ في startOp
- *  أو بتحليل واحد عند أول وصول، ويُبطل في remove/prune/startOp ويُحرَّر عند
- *  إنهاء العملية (لا يبقى في الذاكرة إلا ما يجري تنفيذه). الصيغة على القرص
- *  (سطور ملحقة فقط، آخر سطر غير المكتمل يُتجاهل) لم تتغير فالسجلات القديمة
- *  تُقرأ كما هي.
- */
+/** سجل ملفات: مجلد يحوي ملف `op-<id>.log` لكل عملية. */
 class FileOpJournal(private val dir: Path) : OpJournal {
     private val lock = Any()
 

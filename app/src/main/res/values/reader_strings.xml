@@ -1,6 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="rd_loading">جارٍ التحميل…</string>
     <string name="rd_page_of">%1$d / %2$d</string>
     <string name="rd_progress">%1$d%%</string>
     <string name="rd_go_to_page">الانتقال إلى صفحة</string>
@@ -19,8 +18,6 @@
     <string name="rd_bookmark_name">اسم العلامة</string>
     <string name="rd_bookmark_default_page">صفحة %1$d</string>
     <string name="rd_bookmark_default_pos">الموضع %1$d%%</string>
-    <string name="rd_bookmark_added">أُضيفت العلامة</string>
-    <string name="rd_bookmark_removed">أُزيلت العلامة</string>
     <string name="rd_bookmark_rename">إعادة تسمية العلامة</string>
     <string name="rd_reader_settings">إعدادات القراءة</string>
     <string name="rd_theme">السمة</string>

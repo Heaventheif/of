@@ -10,12 +10,10 @@ import org.junit.rules.TemporaryFolder
 import java.nio.file.Files
 import java.nio.file.Path
 
-/** اختبارات F6 وF8 وF11 وF13 من REVIEW.md. */
 class RemainingFixesTest {
     @get:Rule val tmp = TemporaryFolder()
     private fun dir(n: String): Path = tmp.newFolder(n).toPath()
 
-    // T6 / F6
     @Test fun hiddenFolderIsNotSearchedWhenHiddenExcluded() {
         val root = dir("s")
         Files.createDirectories(root.resolve(".git"))
@@ -28,7 +26,6 @@ class RemainingFixesTest {
         assertEquals(2, on.hits.size)
     }
 
-    // T7 / F8
     @Test fun windows1256FileKeepsItsEncodingOnRoundTrip() {
         val cs = java.nio.charset.Charset.forName("windows-1256")
         val original = "مرحبا بالعالم".toByteArray(cs)
@@ -54,7 +51,6 @@ class RemainingFixesTest {
         assertArrayEquals(bytes, TextFile.encode(d.text, d.charset, d.bom))
     }
 
-    // T8 / F8
     @Test fun atomicWriteReplacesAndLeavesNoTemp() {
         val d = dir("w"); val f = d.resolve("a.txt")
         Files.writeString(f, "old")
@@ -63,7 +59,6 @@ class RemainingFixesTest {
         assertEquals(listOf("a.txt"), Files.list(d).use { s -> s.map { it.fileName.toString() }.toList() })
     }
 
-    // T9 / F11 + F19
     @Test fun journalIgnoresTruncatedLastLineAndDurableAppendsReadBack() {
         val jd = dir("j")
         val j = FileOpJournal(jd)

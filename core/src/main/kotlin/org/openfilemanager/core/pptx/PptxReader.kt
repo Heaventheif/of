@@ -68,6 +68,8 @@ object PptxReader {
     const val MAX_FILE_BYTES = 80L * 1024 * 1024
     private const val MAX_TOTAL_CHARS = 40_000_000
     private const val MAX_PART_BYTES = 24L * 1024 * 1024
+
+    private const val MAX_TOTAL_XML_BYTES = 512L * 1024 * 1024
     private const val MAX_SLIDES = 3000
     private val SLIDE_PART = Regex("""(?i)^ppt/slides/slide\d+\.xml$""")
 
@@ -268,15 +270,22 @@ object PptxReader {
     private fun partNumber(name: String): Int =
         Regex("(\\d+)(?=\\.[^.]+$)").find(name)?.groupValues?.get(1)?.toIntOrNull() ?: Int.MAX_VALUE
 
-    private class Budget { var text = 0 }
+    private class Budget {
+        var text = 0
+
+        var xmlBytes = 0L
+    }
 
     private fun read(zip: ZipFile, name: String, budget: Budget): String? {
         val e = zip.getEntry(name) ?: return null
         if (e.size > MAX_PART_BYTES) throw PptxException(PptxException.Reason.TOO_LARGE)
-        return zip.getInputStream(e).use(::readText)
+        val bytes = zip.getInputStream(e).use(::readBytes)
+        budget.xmlBytes += bytes.size
+        if (budget.xmlBytes > MAX_TOTAL_XML_BYTES) throw PptxException(PptxException.Reason.TOO_LARGE)
+        return String(bytes, Charsets.UTF_8)
     }
 
-    private fun readText(s: InputStream): String {
+    private fun readBytes(s: InputStream): ByteArray {
         // قراءة محدودة: لا يُحمَّل جزء أكبر من الحد ولو كذب الترويسة عن الحجم
         val out = java.io.ByteArrayOutputStream()
         val buf = ByteArray(16 * 1024)
@@ -286,6 +295,6 @@ object PptxReader {
             if (out.size() + n > MAX_PART_BYTES) throw PptxException(PptxException.Reason.TOO_LARGE)
             out.write(buf, 0, n)
         }
-        return String(out.toByteArray(), Charsets.UTF_8)
+        return out.toByteArray()
     }
 }

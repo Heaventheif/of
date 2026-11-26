@@ -14,14 +14,21 @@ import java.util.UUID
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import org.openfilemanager.app.AppDispatchers
+import org.openfilemanager.app.FeatureFlags
 import org.openfilemanager.core.DocFingerprint
 
-/** Reader-only DataStore: kept apart from the editor's settings so neither can affect the other. */
 private val Context.readerDataStore: DataStore<Preferences> by preferencesDataStore(name = "reader")
+
+private fun legacyTextEditorFontOf(context: Context): Int? =
+    runCatching {
+        val sp = context.applicationContext.getSharedPreferences("editor_style", Context.MODE_PRIVATE)
+        if (sp.contains("size")) sp.getInt("size", ReaderPrefs.DEFAULT_TEXT_EDITOR_FONT) else null
+    }.getOrNull()
 
 enum class ReaderTheme { SYSTEM, LIGHT, DARK }
 
@@ -30,8 +37,10 @@ enum class ReaderFormat { PDF, DOCX }
 data class ReaderPrefs(
     val theme: ReaderTheme = ReaderTheme.SYSTEM,
     val docxFontPx: Int = DEFAULT_DOCX_FONT,
+    val pptxFontPx: Int = DEFAULT_DOCX_FONT,
     val pdfZoom: Float = 1f,
-    val pdfDark: Boolean = false
+    val pdfDark: Boolean = false,
+    val textEditorFontPx: Int = DEFAULT_TEXT_EDITOR_FONT
 ) {
     companion object {
         const val DEFAULT_DOCX_FONT = 18
@@ -39,6 +48,10 @@ data class ReaderPrefs(
         const val MAX_DOCX_FONT = 34
         const val MIN_ZOOM = 0.5f
         const val MAX_ZOOM = 3f
+        /** حدود خط محرر النصوص = ثوابت الشاشة نفسها (MIN_SIZE/MAX_SIZE في TextEditorScreen). */
+        const val DEFAULT_TEXT_EDITOR_FONT = 16
+        const val MIN_TEXT_EDITOR_FONT = 11
+        const val MAX_TEXT_EDITOR_FONT = 28
     }
 }
 
@@ -58,27 +71,96 @@ data class Bookmark(
 )
 
 /** Reading position, bookmarks and preferences, all keyed by content fingerprint ([DocFingerprint]). */
-class ReaderStore(context: Context) {
+class ReaderStore private constructor(
+    private val ds: DataStore<Preferences>,
+    private val legacyTextEditorFont: () -> Int?
+) {
 
-    private val ds = context.applicationContext.readerDataStore
+    /** البناء الاعتيادي من السياق (متجر DataStore المفرد للتطبيق). */
+    constructor(context: Context) : this(
+        context.applicationContext.readerDataStore,
+        legacyTextEditorFont = { legacyTextEditorFontOf(context) }
+    )
 
-    // ---- preferences ----------------------------------------------------------------------------------------
+    @Volatile private var pptxFontMigrated = false
+
+    @Volatile private var textEditorFontMigrated = false
+    private val migrationMutex = kotlinx.coroutines.sync.Mutex()
+
+    private suspend fun migratePptxFontOnce(snapshot: Preferences): Boolean {
+        if (pptxFontMigrated) return false
+        migrationMutex.withLock {
+            if (pptxFontMigrated) return false
+            try {
+                if (snapshot[K_PPTX_FONT] == null && snapshot[K_DOCX_FONT] != null) {
+                    // نسخة لمرة واحدة من قيمة DOCX القديمة: تُنسخ ولا تُحذف أبداً،
+                    // والكتابة ترفض نفسها إن سبقها كاتب آخر (تحرير-if-null).
+                    val docx = snapshot[K_DOCX_FONT]!!
+                    ds.edit { cur ->
+                        if (cur[K_PPTX_FONT] == null) {
+                            cur[K_PPTX_FONT] = docx.coerceIn(ReaderPrefs.MIN_DOCX_FONT, ReaderPrefs.MAX_DOCX_FONT)
+                        }
+                    }
+                    return true
+                }
+            } finally {
+                pptxFontMigrated = true
+            }
+        }
+        return false
+    }
+
+    private suspend fun migrateTextEditorFontOnce(snapshot: Preferences): Boolean {
+        if (!FeatureFlags.perReaderPrefs) return false
+        if (textEditorFontMigrated) return false
+        migrationMutex.withLock {
+            if (textEditorFontMigrated) return false
+            try {
+                if (snapshot[K_TEXT_FONT] == null) {
+                    // نسخة لمرة واحدة من القيمة القديمة (SharedPreferences المحرر):
+                    // تُنسخ ولا تُحذف أبداً، والكتابة ترفض نفسها إن سبقها كاتب آخر.
+                    val legacy = runCatching { legacyTextEditorFont() }.getOrNull()
+                    if (legacy != null) {
+                        ds.edit { cur ->
+                            if (cur[K_TEXT_FONT] == null) {
+                                cur[K_TEXT_FONT] = legacy.coerceIn(ReaderPrefs.MIN_TEXT_EDITOR_FONT, ReaderPrefs.MAX_TEXT_EDITOR_FONT)
+                            }
+                        }
+                        return true
+                    }
+                }
+            } finally {
+                textEditorFontMigrated = true
+            }
+        }
+        return false
+    }
+
+    private fun buildPrefs(p: Preferences): ReaderPrefs = ReaderPrefs(
+        theme = p[K_THEME]?.let { n -> ReaderTheme.entries.firstOrNull { it.name == n } } ?: ReaderTheme.SYSTEM,
+        docxFontPx = (p[K_DOCX_FONT] ?: ReaderPrefs.DEFAULT_DOCX_FONT).coerceIn(ReaderPrefs.MIN_DOCX_FONT, ReaderPrefs.MAX_DOCX_FONT),
+        pptxFontPx = (p[K_PPTX_FONT] ?: ReaderPrefs.DEFAULT_DOCX_FONT).coerceIn(ReaderPrefs.MIN_DOCX_FONT, ReaderPrefs.MAX_DOCX_FONT),
+        pdfZoom = (p[K_PDF_ZOOM] ?: 1f).coerceIn(ReaderPrefs.MIN_ZOOM, ReaderPrefs.MAX_ZOOM),
+        pdfDark = p[K_PDF_DARK] ?: false,
+        textEditorFontPx = (p[K_TEXT_FONT] ?: ReaderPrefs.DEFAULT_TEXT_EDITOR_FONT).coerceIn(ReaderPrefs.MIN_TEXT_EDITOR_FONT, ReaderPrefs.MAX_TEXT_EDITOR_FONT)
+    )
 
     val prefs: Flow<ReaderPrefs> = ds.data.map { p ->
-        ReaderPrefs(
-            theme = p[K_THEME]?.let { n -> ReaderTheme.entries.firstOrNull { it.name == n } } ?: ReaderTheme.SYSTEM,
-            docxFontPx = (p[K_DOCX_FONT] ?: ReaderPrefs.DEFAULT_DOCX_FONT).coerceIn(ReaderPrefs.MIN_DOCX_FONT, ReaderPrefs.MAX_DOCX_FONT),
-            pdfZoom = (p[K_PDF_ZOOM] ?: 1f).coerceIn(ReaderPrefs.MIN_ZOOM, ReaderPrefs.MAX_ZOOM),
-            pdfDark = p[K_PDF_DARK] ?: false
-        )
+        // الهجرة تكتب المفتاح الجديد؛ نعيد القراءة حتى يأتي أول إصدار بالقيمة المنسوخة.
+        val pptxMigrated = migratePptxFontOnce(p)
+        val textMigrated = migrateTextEditorFontOnce(p)
+        if (pptxMigrated || textMigrated) buildPrefs(ds.data.first()) else buildPrefs(p)
     }
 
     suspend fun prefsNow(): ReaderPrefs = prefs.first()
 
     suspend fun setTheme(t: ReaderTheme) { ds.edit { it[K_THEME] = t.name } }
     suspend fun setDocxFont(px: Int) { ds.edit { it[K_DOCX_FONT] = px.coerceIn(ReaderPrefs.MIN_DOCX_FONT, ReaderPrefs.MAX_DOCX_FONT) } }
+    suspend fun setPptxFont(px: Int) { ds.edit { it[K_PPTX_FONT] = px.coerceIn(ReaderPrefs.MIN_DOCX_FONT, ReaderPrefs.MAX_DOCX_FONT) } }
     suspend fun setPdfZoom(z: Float) { ds.edit { it[K_PDF_ZOOM] = z.coerceIn(ReaderPrefs.MIN_ZOOM, ReaderPrefs.MAX_ZOOM) } }
     suspend fun setPdfDark(on: Boolean) { ds.edit { it[K_PDF_DARK] = on } }
+
+    suspend fun setTextEditorFont(px: Int) { ds.edit { it[K_TEXT_FONT] = px.coerceIn(ReaderPrefs.MIN_TEXT_EDITOR_FONT, ReaderPrefs.MAX_TEXT_EDITOR_FONT) } }
 
     // ---- document identity ----------------------------------------------------------------------------------
 
@@ -171,14 +253,20 @@ class ReaderStore(context: Context) {
         }.getOrDefault(emptyList())
     }
 
-    private companion object {
-        val K_THEME = stringPreferencesKey("theme")
-        val K_DOCX_FONT = intPreferencesKey("docx_font_px")
-        val K_PDF_ZOOM = floatPreferencesKey("pdf_zoom")
-        val K_PDF_DARK = booleanPreferencesKey("pdf_dark")
-        val K_POS_INDEX = stringPreferencesKey("pos_index")
-        const val MAX_POSITIONS = 300
-        const val MAX_BOOKMARKS = 500
-        const val MAX_TITLE = 120
+    companion object {
+        /** للاختبار على JVM: بناء المتجر من DataStore فوق ملف مؤقت بدل سياق أندرويد (ومصدر القيمة القديمة محقون). */
+        internal fun forDataStore(ds: DataStore<Preferences>, legacyTextEditorFont: () -> Int? = { null }): ReaderStore =
+            ReaderStore(ds, legacyTextEditorFont)
+
+        private val K_THEME = stringPreferencesKey("theme")
+        private val K_DOCX_FONT = intPreferencesKey("docx_font_px")
+        private val K_PPTX_FONT = intPreferencesKey("pptx_font_px")
+        private val K_PDF_ZOOM = floatPreferencesKey("pdf_zoom")
+        private val K_PDF_DARK = booleanPreferencesKey("pdf_dark")
+        private val K_TEXT_FONT = intPreferencesKey("text_editor_font_px")
+        private val K_POS_INDEX = stringPreferencesKey("pos_index")
+        private const val MAX_POSITIONS = 300
+        private const val MAX_BOOKMARKS = 500
+        private const val MAX_TITLE = 120
     }
 }

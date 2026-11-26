@@ -10,20 +10,12 @@ import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 
-/**
- * سجل أخطاء محلي فقط: لا خدمات تقارير خارجية، ولا شيء يخرج من الجهاز
- * (لا صلاحية INTERNET أصلاً). يكتب الأخطاء التقنية وحدها في `filesDir/logs`،
- * وكل مسار في الرسالة أو الأثر يُعمَّى عبر [PathRedactor] في :core فلا تُخزَّن
- * أسماء ملفات المستخدم نصاً صريحاً. ملفات السجل تُقشَّر إلى آخر [MAX_LOG_FILES].
- */
+/** سجل أخطاء محلي فقط: لا خدمات تقارير خارجية، ولا شيء يخرج من الجهاز (لا صلاحية INTERNET أصلاً). */
 object AppLog {
     private const val MAX_LOG_FILES = 5
     private const val MAX_LOG_FILE_BYTES = 1L * 1024L * 1024L
     private const val MAX_ENTRY_CHARS = 16_384
     private const val DATE_FORMAT = "yyyy-MM-dd"
-
-    /** طول الطابع الزمني "yyyy-MM-dd HH:mm:ss"؛ يليه مباشرة المستوى. */
-    private const val TIMESTAMP_LEN = 19
 
     @Volatile
     private var logsDir: Path? = null
@@ -105,27 +97,6 @@ object AppLog {
         val first = current.resolveSibling(current.fileName.toString().removeSuffix(".log") + "-1.log")
         Files.deleteIfExists(first)
         if (Files.exists(current)) Files.move(current, first)
-    }
-
-
-    /** ملخص آخر انهيار مسجل (لقسم التشخيص في الإعدادات)، أو null إن لم يوجد. */
-    fun lastCrashSummary(): String? {
-        val dir = logsDir ?: return null
-        return runCatching {
-            val files = Files.list(dir).use { stream ->
-                // toList() على Stream تتطلب API 34 (الفحص NewApi): تجميع يدوي متوافق مع minSdk 30.
-                val out = ArrayList<Path>()
-                stream.filter { it.fileName.toString().startsWith("app-") }.forEach { out.add(it) }
-                out.sortedWith(compareByDescending<Path> { runCatching { Files.getLastModifiedTime(it).toMillis() }.getOrDefault(0L) }
-                    .thenByDescending { it.fileName.toString() })
-            }
-            for (f in files) {
-                val line = Files.readAllLines(f, Charsets.UTF_8)
-                    .lastOrNull { it.startsWith(" F/", TIMESTAMP_LEN) }
-                if (line != null) return line
-            }
-            null
-        }.getOrNull()
     }
 
     /** يبقي آخر [MAX_LOG_FILES] ملفات فقط. */

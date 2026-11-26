@@ -53,6 +53,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.openfilemanager.app.ArchiveRejections
+import org.openfilemanager.app.FeatureFlags
 import org.openfilemanager.app.R
 import org.openfilemanager.app.appContainer
 import org.openfilemanager.app.AppDispatchers
@@ -90,7 +92,7 @@ fun PptxReaderScreen(path: String, onBack: () -> Unit) {
         deck = null
         val exists = withContext(AppDispatchers.io) { file.exists() && file.canRead() }
         if (!exists) { status = ReaderStatus.Error(R.string.rd_err_missing, false); return@LaunchedEffect }
-        scale = ctx.appContainer.readerStore.prefsNow().docxFontPx / DEFAULT_FONT_PX
+        scale = ctx.appContainer.readerStore.prefsNow().pptxFontPx / DEFAULT_FONT_PX
         withContext(AppDispatchers.io) { runCatching { PptxReader.parse(file) } }
             .onSuccess { deck = it; status = ReaderStatus.Ready }
             .onFailure { e ->
@@ -193,12 +195,17 @@ fun PptxReaderScreen(path: String, onBack: () -> Unit) {
 
 /** رسالة الخطأ المناسبة لسبب تعذّر فتح العرض. */
 internal object PptxLoad {
-    fun messageFor(e: Throwable): Int = when ((e as? PptxException)?.reason) {
-        PptxException.Reason.ENCRYPTED -> R.string.rd_err_encrypted_pptx
-        PptxException.Reason.TOO_LARGE -> R.string.rd_err_too_large
-        PptxException.Reason.EMPTY -> R.string.rd_err_empty
-        PptxException.Reason.NOT_OOXML -> R.string.rd_err_not_pptx
-        else -> R.string.rd_err_corrupt_pptx
+    fun messageFor(e: Throwable): Int {
+        if (FeatureFlags.archiveRejectionFeedback) {
+            ArchiveRejections.reasonOf(e)?.let { return ArchiveRejections.messageRes(it) }
+        }
+        return when ((e as? PptxException)?.reason) {
+            PptxException.Reason.ENCRYPTED -> R.string.rd_err_encrypted_pptx
+            PptxException.Reason.TOO_LARGE -> R.string.rd_err_too_large
+            PptxException.Reason.EMPTY -> R.string.rd_err_empty
+            PptxException.Reason.NOT_OOXML -> R.string.rd_err_not_pptx
+            else -> R.string.rd_err_corrupt_pptx
+        }
     }
 }
 

@@ -15,7 +15,6 @@ import java.nio.file.Path
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
-/** اختبارات انحدار لعيوب P0 (F1–F4) من REVIEW.md. */
 class DataSafetyRegressionTest {
     @get:Rule val tmp = TemporaryFolder()
 
@@ -35,7 +34,6 @@ class DataSafetyRegressionTest {
         }
     }
 
-    // ---- T1 / F1 ----
     @Test fun keepBothOnNestedConflictPlacesFilesUnderAlternativeWithoutDuplicatedPrefix() {
         val src = dir("src")
         val dst = dir("dst")
@@ -50,7 +48,6 @@ class DataSafetyRegressionTest {
         assertFalse("duplicated prefix", Files.exists(dst.resolve("sub/inner (1)/inner")))
     }
 
-    // ---- T2 / F2 (السلوك العام؛ حالة FAT الفعلية تحتاج نظام ملفات غير حساس للحالة) ----
     @Test fun caseOnlyRenameKeepsSingleFile() {
         val d = dir("r")
         write(d.resolve("Photo.JPG"), "x")
@@ -66,7 +63,6 @@ class DataSafetyRegressionTest {
         assertEquals(setOf("a.txt", "A2.txt"), names(d))
     }
 
-    // ---- T3 / F3 ----
     @Test fun inPlaceFallbackRestoresOriginalWhenNewContentIsCorrupt() {
         val d = dir("z")
         val archive = d.resolve("a.zip")
@@ -93,7 +89,6 @@ class DataSafetyRegressionTest {
         assertEquals(setOf("a.zip", "fresh.tmp"), names(d))
     }
 
-    // ---- T4 / F4 (الوظيفة والنظافة؛ ترتيب fsync لا يُرصد على نظام ملفات حقيقي) ----
     @Test fun zipCreateThenExtractRoundTripLeavesNoTemps() {
         val src = dir("s"); write(src.resolve("f/a.txt"), "hello")
         val out = dir("o").resolve("x.zip")

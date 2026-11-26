@@ -1,15 +1,6 @@
 package org.openfilemanager.core
 
-/**
- * كاش LRU بسقف وزن (بايت عادة): أي كاش خاص بحجم أقصى بالبايت، يُنظَّف عند
- * onTrimMemory.
- *
- * - الوصول ([get]) يجدّد حداثة الإدخال (accessOrder) فيُطرد الأقدم استخداماً أولاً.
- * - [trim] يطرد حتى هدف وزن أدنى: هو خط التنظيف الذي تستدعيه الواجهة من
- *   `onTrimMemory` بمستوى الضغط المناسب.
- * - الوزن صفر مسموح (إدخال لا يُطرد غيره)، والسقف يجب أن يكون موجباً.
- * - منطق صرف بلا أندرويد فيُختبر على JVM.
- */
+/** كاش LRU بسقف وزن (بايت عادة): أي كاش خاص بحجم أقصى بالبايت، يُنظَّف عند onTrimMemory. */
 class BoundedLruCache<K : Any, V : Any>(
     private val maxWeight: Long,
     private val weigher: (key: K, value: V) -> Long

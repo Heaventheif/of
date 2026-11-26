@@ -74,6 +74,9 @@ class DocxReaderState(
 
     var webView: WebView? = null
     private var docId = ""
+    // منسق الإشارات المرجعية المشترك بين القارئين — كان مكرراً.
+    private val bookmarksCtl: ReaderBookmarkController? get() =
+        if (docId.isEmpty()) null else ReaderBookmarkController(docId, ReaderFormat.DOCX, store, scope)
     private var saved: ReadingPosition? = null
     private var searchJob: Job? = null
     private var saveJob: Job? = null
@@ -144,7 +147,7 @@ class DocxReaderState(
         if (!o.optBoolean("ok")) {
             status = when (o.optString("error")) {
                 "empty" -> ReaderStatus.Error(R.string.rd_err_empty, true)
-                // (F-12) تجاوز ميزانية ZIP بعد فك الضغط (عدد/أحجام/نسبة/وسائط).
+                // تجاوز ميزانية ZIP بعد فك الضغط (عدد/أحجام/نسبة/وسائط).
                 "budget" -> ReaderStatus.Error(R.string.rd_err_budget, true)
                 else -> ReaderStatus.Error(R.string.rd_err_corrupt_docx, true)
             }
@@ -227,9 +230,9 @@ class DocxReaderState(
         context.getString(R.string.rd_bookmark_default_pos, (progress * 100).roundToInt())
     }
 
-    fun addBookmark(title: String) { scope.launch { store.addBookmark(docId, ReaderFormat.DOCX, title, block, blockFraction) } }
-    fun removeBookmark(b: Bookmark) { scope.launch { store.removeBookmark(docId, ReaderFormat.DOCX, b.id) } }
-    fun renameBookmark(b: Bookmark, title: String) { scope.launch { store.renameBookmark(docId, ReaderFormat.DOCX, b.id, title) } }
+    fun addBookmark(title: String) { bookmarksCtl?.add(title, block, blockFraction) }
+    fun removeBookmark(b: Bookmark) { bookmarksCtl?.remove(b) }
+    fun renameBookmark(b: Bookmark, title: String) { bookmarksCtl?.rename(b, title) }
 
     // ---- search ---------------------------------------------------------------------------------------------
 

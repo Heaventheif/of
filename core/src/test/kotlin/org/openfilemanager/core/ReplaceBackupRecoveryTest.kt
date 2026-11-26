@@ -1,4 +1,5 @@
 package org.openfilemanager.core
+import org.openfilemanager.core.CoreOpCode
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -12,16 +13,6 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.attribute.FileTime
 
-/**
- * اختبارات انحدار إلزامية (المرحلة 2 من مهمة إصلاح 0.8.1): إثبات أن ملفات
- * المستخدم القديمة لا تضيع في أي مرحلة من مراحل استبدال مجلد الوجهة عند
- * استخراج أرشيف بسياسة REPLACE — قبل نقل الأصل، بعده، أثناء الاستخراج،
- * بعده وقبل الاعتماد، وعند كل فشل ممكن.
- *
- * كل اختبار يعيد إنتاج حالة القرص والسجل تماماً كما تتركها موت العملية
- * أو الفشل في تلك المرحلة، ثم يشغّل [ReplaceBackupRecovery.reconcile]
- * (و[OpRecovery.cleanupStaleTemps]) ويتحقق من بقاء البيانات.
- */
 class ReplaceBackupRecoveryTest {
     @get:Rule val tmp = TemporaryFolder()
 
@@ -147,7 +138,8 @@ class ReplaceBackupRecoveryTest {
     fun interruptedAfterExtractionBeforeAdoptionKeepsNewAndRemovesBackup() {
         val targetDir = dir("case4")
         val s = store()
-        val (journal, opId) = extractJournal(OpState.FINISHED, targetDir, message = "استُخرج 1 عنصراً")
+        // core الآن يخزّن رمزاً لا نصاً عربياً في السجل.
+        val (journal, opId) = extractJournal(OpState.FINISHED, targetDir, message = CoreOpCode.EXTRACTED)
         val original = targetDir.resolve("docs")
         val backup = targetDir.resolve(".fm-replace-backup-" + java.util.UUID.randomUUID())
         s.record(opId, original, backup)
@@ -170,7 +162,7 @@ class ReplaceBackupRecoveryTest {
         val targetDir = dir("case5")
         val original = oldUserData(targetDir)
         val s = store()
-        val (journal, opId) = extractJournal(OpState.FAILED, targetDir, message = "فشل الاستخراج")
+        val (journal, opId) = extractJournal(OpState.FAILED, targetDir, message = CoreOpCode.EXTRACT_FAILED)
         val backup = targetDir.resolve(".fm-replace-backup-" + java.util.UUID.randomUUID())
         s.record(opId, original, backup)
         Files.move(original, backup)
@@ -253,7 +245,7 @@ class ReplaceBackupRecoveryTest {
         val expectedReport = Files.readAllBytes(original.resolve("report.txt"))
         val expectedPhoto = Files.readAllBytes(original.resolve("sub/photo.bin"))
         val s = store()
-        val (journal, opId) = extractJournal(OpState.CANCELLED, targetDir, message = "أُلغيت")
+        val (journal, opId) = extractJournal(OpState.CANCELLED, targetDir, message = CoreOpCode.CANCELLED)
         val backup = targetDir.resolve(".fm-replace-backup-" + java.util.UUID.randomUUID())
         s.record(opId, original, backup)
         Files.move(original, backup)
@@ -337,6 +329,6 @@ class ReplaceBackupRecoveryTest {
         out = ReplaceBackupRecovery.reconcile(s, journal)
         assertTrue(out.kept.contains(opId))
         assertTrue(Files.exists(backup2))
-        assertTrue(out.errors.any { it.contains("محفوظة") })
+        assertTrue(out.errors.any { it.contains(CoreOpCode.BACKUP_PRESERVED) })
     }
 }

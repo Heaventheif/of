@@ -5,22 +5,13 @@ import java.nio.file.FileAlreadyExistsException
 import java.nio.file.Files
 import java.nio.file.LinkOption
 import java.nio.file.Path
-import java.nio.file.StandardCopyOption
 import java.util.Locale
 import java.util.UUID
 
 /** عنصر داخل دفعة التسمية: الاسم الحالي وهل هو مجلد (المجلدات لا امتداد لها). */
 data class RenameInput(val name: String, val isDirectory: Boolean = false)
 
-/**
- * مواصفة التسمية الجماعية (أربع خانات فقط، لا خطوة ترقيم).
- *
- * [template]  قالب حرفي: `%%` = الاسم الأصلي بلا امتداد، `##` = الرقم التسلسلي، وكل ما سواهما نص حرفي
- *             يُحفظ كما كُتب (مسافات، `%` و`#` المفردان، ...) دون أي تنظيف.
- * [extension] امتداد عام: فارغ = يبقى امتداد كل ملف كما هو. النقطة تُضاف تلقائياً.
- * [start]     رقم أول ملف؛ كل ملف تالٍ يزيد واحداً بالضبط.
- * [zeros]     عدد الأصفار الإضافية قبل الرقم: العرض = أرقام [start] + [zeros]، والرقم الأطول لا يُقتطع.
- */
+/** مواصفة التسمية الجماعية (أربع خانات فقط، لا خطوة ترقيم). */
 data class BatchRenameSpec(
     val template: String,
     val extension: String = "",
@@ -192,7 +183,14 @@ object RenameEngine {
      * التنفيذ على مرحلتين: كل الملفات إلى أسماء مؤقتة، ثم إلى النهائية،
      * فيعمل التبديل المتسلسل (A→B و B→C) بلا تعارض. عند أي فشل يُتراجع عمّا تم.
      */
-    fun execute(steps: List<RenameStep>, journal: RenameJournal? = null): RenameOutcome {
+    fun execute(steps: List<RenameStep>, journal: RenameJournal? = null): RenameOutcome =
+        execute(steps, journal) { _ -> }
+
+    internal fun execute(
+        steps: List<RenameStep>,
+        journal: RenameJournal?,
+        beforeFinalMove: (RenameStep) -> Unit
+    ): RenameOutcome {
         validatePlan(steps)?.let { return RenameOutcome.Failure(it, rolledBack = true) }
         val movedToTemp = ArrayList<RenameStep>()
         val movedToFinal = ArrayList<RenameStep>()
@@ -205,7 +203,8 @@ object RenameEngine {
             }
             for (s in steps) {
                 if (Files.exists(s.to, LinkOption.NOFOLLOW_LINKS)) throw FileAlreadyExistsException(s.to.toString())
-                Files.move(s.temp, s.to, StandardCopyOption.ATOMIC_MOVE)
+                beforeFinalMove(s)
+                AtomicIO.moveNoReplace(s.temp, s.to)
                 movedToFinal += s
                 journal?.record(RenamePhase.TO_FINAL, s)
             }
@@ -215,11 +214,6 @@ object RenameEngine {
         }
     }
 
-    /**
-     * يرفض خطة غير متجانسة أو متصادمة قبل أول إعادة تسمية. يُسمح أن تكون
-     * الوجهة اسم مصدر آخر في الدفعة (التبديل/السلسلة)، لكن لا يُسمح بوجهة
-     * محجوزة خارج الدفعة أو باسم مؤقت مستخدم في أي خطوة.
-     */
     private fun validatePlan(steps: List<RenameStep>): Exception? {
         if (steps.isEmpty()) return null
         val normalized = steps.map { s ->

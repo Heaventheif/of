@@ -48,12 +48,7 @@
     <string name="ie_text_intro">Add text over the image and style it as you like — it stays editable until you save.</string>
     <string name="ie_text_hint">Type your text here</string>
     <string name="ie_font_size">Font size</string>
-    <string name="ie_font">Font</string>
     <string name="ie_font_default">Default</string>
-    <string name="ie_font_sans">Sans</string>
-    <string name="ie_font_serif">Serif</string>
-    <string name="ie_font_mono">Monospace</string>
-    <string name="ie_font_cursive">Cursive</string>
     <string name="ie_bold">Bold</string>
     <string name="ie_align_start">Align to start</string>
     <string name="ie_align_center">Center</string>

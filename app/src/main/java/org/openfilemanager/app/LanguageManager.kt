@@ -35,3 +35,6 @@ object LanguageManager {
         return base.createConfigurationContext(config)
     }
 }
+
+/** اختصار موحّد لكل من يملك attachBaseContext (App, OfmActivity, FileOperationService, MusicPlaybackService). */
+fun android.content.Context.applyLanguage(): android.content.Context = LanguageManager.wrap(this)

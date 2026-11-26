@@ -1,6 +1,5 @@
 package org.openfilemanager.core
 
-import org.apache.commons.compress.archivers.tar.TarArchiveEntry
 import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
 import org.apache.commons.compress.archivers.zip.ZipFile
 import org.apache.commons.compress.compressors.gzip.GzipCompressorInputStream
@@ -37,12 +36,7 @@ data class ArchiveListing(
     val scanned: Int
 )
 
-/**
- * معاينة محتويات الأرشيف قبل الاستخراج: قراءة العناوين فقط بلا فك ضغط
- * ولا كتابة على القرص. تُكشف الصيغة ببصمة المحتوى (ZIP عبر فهرس ZIP المركزي،
- * وTAR ببث العناوين)، ويُعلَّم غير الآمن عبر [SafeResolve] نفسه الذي يطبقه المستخرج،
- * فلا يمكن أن تعرض المعاينة عنصراً سيقبلُه المستخرج ملغياً.
- */
+/** معاينة محتويات الأرشيف قبل الاستخراج: قراءة العناوين فقط بلا فك ضغط ولا كتابة على القرص. */
 object ArchiveInspector {
 
     /** جذر شكلي لفحص أمان الأسماء: [SafeResolve.resolve] عمليات مسار صرفة لا تلمس القرص. */
@@ -68,6 +62,20 @@ object ArchiveInspector {
     // ---------- ZIP: فهرس مركزي بلا فك ضغط ----------
 
     private fun listZip(archive: Path, charset: Charset, maxEntries: Int): ArchiveListing {
+        when (val verdict = ZipCentralDirectoryCheck.check(archive, maxEntries)) {
+            is ZipCentralDirectoryCheck.Verdict.OverLimit ->
+                throw ArchiveLimitException("too many entries (> $maxEntries)")
+            is ZipCentralDirectoryCheck.Verdict.CentralDirectoryTooLarge ->
+                throw ArchiveLimitException(
+                    "central directory exceeds ${verdict.cap} bytes"
+                )
+            is ZipCentralDirectoryCheck.Verdict.Inconsistent ->
+                throw ArchiveLimitException("zip ${verdict.problem}")
+            // (E6) فرعا المتابعة: Pass يفتح كما كان؛ Unreadable يترك الحكم
+            // لـ ZipFile نفسه (مسار اليوم). التعليق هنا قبل else كي لا يُقرأ
+            // كأنه فرعٌ ميت.
+            else -> {}
+        }
         ZipFile(archive, charset.name()).use { zip ->
             val all = zip.entries
             val entries = ArrayList<ArchiveEntryInfo>(minOf(maxEntries, 256))

@@ -4,9 +4,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Matrix
-import org.openfilemanager.app.AppDispatchers
 import org.openfilemanager.core.ExifOrientation
-import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.math.max
 
@@ -105,6 +103,4 @@ object ImageDecoder {
         return Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
     }
 
-    /** هل الملف صورة ساكنة يفتحها فك الترميز؟ (لعرض إجراء التعديل أو إخفائه) */
-    fun canDecode(path: Path): Boolean = Files.isReadable(path) && readBounds(path) != null
 }

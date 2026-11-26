@@ -53,7 +53,6 @@ internal class PdfContentInterpreter(private val doc: PdfTextDocument) {
 
         fun combined(): DoubleArray = mul(tm, gs.ctm)
 
-        /** Moves the text matrix along the baseline by [tx] text-space units (already scaled by font size). */
         fun advance(tx: Double) {
             tm = mul(doubleArrayOf(1.0, 0.0, 0.0, 1.0, tx, 0.0), tm)
         }

@@ -75,7 +75,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import org.openfilemanager.app.R
 import org.openfilemanager.app.imageedit.ImageEditorViewModel
-import org.openfilemanager.app.imageedit.ImageEditorViewModel.EditorUiState
+import org.openfilemanager.app.imageedit.EditorUiState
 import org.openfilemanager.app.imageedit.model.BrushStyle
 import org.openfilemanager.app.imageedit.model.EditLayer
 import org.openfilemanager.app.imageedit.engine.ImageRenderer
@@ -93,7 +93,7 @@ fun PanelColumn(content: @Composable androidx.compose.foundation.layout.ColumnSc
     Column(
         Modifier
             .fillMaxWidth()
-            // (تصحيح) سقف لارتفاع اللوحة كي لا تبتلع القماش وتبقى الصورة ظاهرة للتعديل
+            // سقف لارتفاع اللوحة كي لا تبتلع القماش وتبقى الصورة ظاهرة للتعديل
             .heightIn(max = LocalPanelMaxHeight.current)
             .verticalScroll(rememberScrollState())
             .padding(horizontal = 16.dp, vertical = 10.dp),
@@ -125,7 +125,7 @@ fun LabeledSlider(
             valueRange = range,
             steps = steps,
             onValueChangeFinished = { onCommit(latest, true) },
-            // (تصحيح) مقبض دائري صغير بدل الشريط العمودي
+            // مقبض دائري صغير بدل الشريط العمودي
             thumb = {
                 Box(
                     Modifier
@@ -145,6 +145,9 @@ fun EditorToolPanel(
     cropRect: FloatRect?,
     onCropRectChange: (FloatRect?) -> Unit
 ) {
+    // AnimatedVisibility يرسم أبناءه فوق بعض كما في Box؛ لوحات تُخرج أكثر من عنصر
+    // (مثل الأشكال: صف الأنواع ثم لوحة الألوان) كانت تتراكب. التغليف بعمود يرصّها رأسياً.
+    Column(Modifier.fillMaxWidth()) {
     when (state.tool) {
         org.openfilemanager.app.imageedit.model.EditorTool.ADJUST -> AdjustToolPanel(vm, state)
         org.openfilemanager.app.imageedit.model.EditorTool.TEXT -> TextToolPanel(vm, state)
@@ -155,6 +158,7 @@ fun EditorToolPanel(
         org.openfilemanager.app.imageedit.model.EditorTool.ROTATE -> RotateToolPanel(vm, state)
         org.openfilemanager.app.imageedit.model.EditorTool.CUT -> CutToolPanel(vm, state)
         org.openfilemanager.app.imageedit.model.EditorTool.NONE -> {}
+    }
     }
 }
 
@@ -280,7 +284,7 @@ private fun FontChip(selected: Boolean, label: String, family: EditorFontFamily,
 
 @Composable
 private fun TextFontSection(vm: ImageEditorViewModel, sel: EditLayer.Text) {
-    // (تصحيح) كان صف الخطوط يلتف حرفاً حرفاً لضيق العرض؛ الآن كل مجموعة تمرَّر أفقياً
+    // كان صف الخطوط يلتف حرفاً حرفاً لضيق العرض؛ الآن كل مجموعة تمرَّر أفقياً
     PanelLabel(stringResource(R.string.ie_font_group_arabic))
     Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         EditorFontFamily.ARABIC_LIST.forEach { f ->
@@ -668,38 +672,36 @@ private fun ShapesToolPanel(vm: ImageEditorViewModel, state: EditorUiState) {
     val activeFill = if (sel != null) sel.fillColor else state.shapeFillColor
     val activeWidth = (sel?.strokeWidthPx?.let { it * state.previewScale }) ?: state.shapeWidthScreenPx
 
-    // اختيار النوع: يُغيّر نوع الشكل المحدد إن وُجد، ويضبط نوع الأشكال الجديدة دائماً
-    Row(
-        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
-            .padding(horizontal = 12.dp, vertical = 8.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        SHAPE_ORDER.forEach { kind ->
-            val chosen = activeKind == kind
-            val tint = if (chosen) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-            val desc = stringResource(shapeLabel(kind))
-            Box(
-                Modifier
-                    .size(48.dp)
-                    .background(
-                        if (chosen) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
-                        RoundedCornerShape(12.dp)
-                    )
-                    .border(
-                        BorderStroke(1.dp, if (chosen) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant),
-                        RoundedCornerShape(12.dp)
-                    )
-                    .semantics { contentDescription = desc }
-                    .clickable {
-                        vm.setShapeSettings(kind = kind)
-                        if (sel != null) vm.updateSelectedShape { it.copy(kind = kind) }
-                    },
-                contentAlignment = Alignment.Center
-            ) { ShapeIcon(kind, tint) }
-        }
-    }
-
     PanelColumn {
+        // اختيار النوع: يُغيّر نوع الشكل المحدد إن وُجد، ويضبط نوع الأشكال الجديدة دائماً
+        Row(
+            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            SHAPE_ORDER.forEach { kind ->
+                val chosen = activeKind == kind
+                val tint = if (chosen) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                val desc = stringResource(shapeLabel(kind))
+                Box(
+                    Modifier
+                        .size(48.dp)
+                        .background(
+                            if (chosen) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
+                            RoundedCornerShape(12.dp)
+                        )
+                        .border(
+                            BorderStroke(1.dp, if (chosen) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant),
+                            RoundedCornerShape(12.dp)
+                        )
+                        .semantics { contentDescription = desc }
+                        .clickable {
+                            vm.setShapeSettings(kind = kind)
+                            if (sel != null) vm.updateSelectedShape { it.copy(kind = kind) }
+                        },
+                    contentAlignment = Alignment.Center
+                ) { ShapeIcon(kind, tint) }
+            }
+        }
         PanelLabel(stringResource(R.string.ie_color))
         EditorColorRow(activeStroke) { c ->
             vm.setShapeSettings(strokeColor = c)
@@ -773,7 +775,6 @@ private fun RotateToolPanel(vm: ImageEditorViewModel, state: EditorUiState) {
                 Icon(Icons.Outlined.SwapVert, null); Spacer(Modifier.width(6.dp)); Text(stringResource(R.string.ie_flip_v))
             }
         }
-        // (تصحيح F19-استعادة) إدخال تاريخ واحد لسحبة التدوير كاملة لا لكل إطار
         LabeledSlider(stringResource(R.string.ie_free_rotation), state.transform.freeRotation, -45f..45f) { v, done ->
             vm.beginSliderCommit()
             vm.setFreeRotationLive(v)

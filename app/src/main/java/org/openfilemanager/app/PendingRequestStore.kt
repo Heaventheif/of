@@ -24,14 +24,7 @@ data class StoredOpRequest(
 /** قائمة عارض/مشغل كما قُرئت من المخزن: النوع، العناصر، وموضع المفتوح. */
 data class StoredPlaylist(val kind: String, val items: List<String>, val index: Int)
 
-/**
- * طلبات العمليات على القرص بدل Intent extras: يحدّ Binder حجم معاملات
- * startForegroundService بنحو ميغابايت واحد، وتحديد كل ملفات مجلد كبير كان
- * يرمي TransactionTooLargeException يُختزل إلى «false» فتضيع العملية بصمت.
- * الملف يُكتب في التخزين الخاص للتطبيق وتحمل النية رمزه فقط.
- *
- * الاستئناف لا يمرّ من هنا: رمزه نص واحد قصير يبقى في extras.
- */
+/** طلبات العمليات على القرص بدل Intent extras. */
 object PendingRequestStore {
     const val KIND_COPY = "COPY"
     const val KIND_MOVE = "MOVE"
@@ -51,10 +44,10 @@ object PendingRequestStore {
 
     private const val DIR_NAME = "pending-ops"
 
-    /** [0.7.9] علامات «الطلب قيد التنفيذ» — ملف لكل opId. */
+    /** علامات «الطلب قيد التنفيذ» — ملف لكل opId. */
     private const val ACTIVE_DIR = "active-ops"
 
-    /** [0.7.9] نسخ احتياطية للطلبات باسم opId (للاسترداد بعد موت العملية). */
+    /** نسخ احتياطية للطلبات باسم opId (للاسترداد بعد موت العملية). */
     private const val PENDING_BACKUP_DIR = "pending-backup"
     private const val MAX_STORED_ITEMS = 100_000
     private const val MAX_STORED_FILE_BYTES = 64L * 1024 * 1024
@@ -207,14 +200,7 @@ object PendingRequestStore {
         runCatching { File(File(root, DIR_NAME), token).delete() }
     }
 
-    /**
-     * يقرأ الطلب ويستهلك ملفه (قراءة واحدة لكل رمز؛ الخدمة START_NOT_STICKY فلا
-     * يعاد تسليم النية، وبقاؤه بعد الاستهلاك يعني ملفات تنساب بلا تنظيف).
-     * null إن غاب الملف أو تلف محتواه.
-     *
-     * (F-07) مهجور في مسار خدمة العمليات لصالح [holdAndRead] التسليم الذري؛
-     * يبقى للاستدعاءات الأخرى المحتملة وللاختبارات.
-     */
+    /** يقرأ الطلب ويستهلك ملفه (قراءة واحدة لكل رمز؛ */
     fun consume(root: File, token: String): StoredOpRequest? {
         if (!validToken(token)) return null
         val file = File(File(root, DIR_NAME), token)
@@ -223,27 +209,7 @@ object PendingRequestStore {
             file.delete()
             return null
         }
-        val request = runCatching {
-            DataInputStream(BufferedInputStream(FileInputStream(file))).use { input ->
-                val kind = input.readUTF()
-                val count = input.readInt()
-                if (count !in 1..MAX_STORED_ITEMS) return null
-                val paths = ArrayList<String>(count)
-                repeat(count) { paths += input.readUTF() }
-                val target = input.readUTF().ifEmpty { null }
-                val extra = input.readUTF().ifEmpty { null }
-                val selectedCount = input.readInt()
-                val selected = when {
-                    selectedCount == -1 -> null
-                    selectedCount in 0..MAX_STORED_ITEMS -> ArrayList<String>(selectedCount).apply {
-                        repeat(selectedCount) { add(input.readUTF()) }
-                    }
-                    else -> return null
-                }
-                if (input.read() != -1) return null
-                StoredOpRequest(kind, paths, target, extra, selected)
-            }
-        }.getOrNull()?.let(::normalizedOrNull)
+        val request = readStored(file)
         file.delete()
         return request
     }
@@ -274,17 +240,7 @@ object PendingRequestStore {
         }.getOrNull()?.let(::normalizedOrNull)
     }
 
-    /**
-     * (F-07) تسليم ذري للطلب من ملف الرمز إلى النسخة الاحتياطية المربوطة بـopId:
-     * كان decode يحذف ملف الطلب أولاً ثم تكتب النسخة الاحتياطية وعلامة التنفيذ
-     * داخل runOp — فتوجد نافذة موت عملية يضيع فيها الطلب كلياً (لا ملف أصلي
-     * ولا نسخة ولا علامة). الآن: إعادة تسمية واحدة داخل التخزين الخاص تنقل
-     * الملف إلى pending-backup/<opId> قبل أي قراءة، فالطلب موجود في مكان واحد
-     * دائم من هذه اللحظة، ولا يُحذف إلا بعد خاتمة العملية (removePending في
-     * finally). إن كانت النسخة موجودة مسبقاً (انقطاع بين النقل والقراءة) فتُقرأ
-     * هي — الاستدعاء متماثل (idempotent).
-     * يعيد null إن غاب الملفان (رمز ونسخة) أو تلفا.
-     */
+    /** تسليم ذري للطلب من ملف الرمز إلى النسخة الاحتياطية المربوطة بـopId. */
     fun holdAndRead(root: File, token: String, opId: String): StoredOpRequest? {
         if (!validToken(token) || !validToken(opId)) return null
         val src = File(File(root, DIR_NAME), token)
@@ -346,7 +302,7 @@ object PendingRequestStore {
      */
     fun purgeOlderThan(root: File, maxAgeMs: Long) {
         val dir = File(root, DIR_NAME)
-        // [0.7.9] newDirectoryStream بدل File.listFiles (بوابة الجودة: بنداء
+        // newDirectoryStream بدل File.listFiles (بوابة الجودة: بنداء
         // نظام واحد، والمجلد قد لا يوجد فنلتقط NoSuchFileException بهدوء).
         runCatching {
             java.nio.file.Files.newDirectoryStream(dir.toPath()).use { stream ->
@@ -359,38 +315,14 @@ object PendingRequestStore {
         }
     }
 
-    /**
-     * [0.7.9] علامة «الطلب قيد التنفيذ»: ملف pending-ops يُستهلك لحظة decode
-     * فور وصول النية، لكن الطلب يبقى معلّقاً حتى تنتهي العملية — موت العملية
-     * بين الاستهلاك والإنهاء كان يفقد الطلب كلياً (لا نية تعاد ولا ملف يُقرأ).
-     * العلامة تعيش في مجلد مستقل حتى لا تبتلعها دورة consume/remove نفسها.
-     * [opId] معرّف العملية الذي سافر مع النية (المفتاح الذي يربط السجل بها).
-     */
+    /** علامة «الطلب قيد التنفيذ». */
     fun markActive(root: File, opId: String) {
         require(validToken(opId)) { "invalid operation id" }
         val dir = File(root, ACTIVE_DIR)
         atomicPrivateWrite(File(dir, opId)) { out -> out.writeUTF(System.currentTimeMillis().toString()) }
     }
 
-    /**
-     * [0.7.9] يقرأ الطلبات المعلّقة غير المنتهية عند بدء الخدمة ويحذف ملفاتها
-     * (تعاد كتابة العلامة عند بدء التنفيذ الجديد). يُصفّي:
-     * - الهرم (أقدم من [staleMs]): النظام لا يعيد التسليم أصلاً فليس له معنى.
-     * - ما له سجل في [journal] بحالة FINISHED/FAILED/CANCELLED: العملية انتهت
-     *   فعلاً قبل موت العملية وبقي ملف العلامة فقط (انحراف نادر: انقطاع بين
-     *   إنهاء السجل ومحو العلامة).
-     * - ما له سجل RUNNING/INTERRUPTED: العلامة تُمحى والقرار (استئناف/إلغاء)
-     *   لحوار الاسترداد (F-01) الذي يعمل من سجل العمليات مباشرة — النسخة
-     *   الاحتياطية لم تعد ضرورة لهذا المسار فتُمحى أيضاً (لا يُعاد تشغيل الطلب
-     *   من أولها صامتاً فتهدم التقدم الجزئي المسجّل).
-     * - (F-07) نسخ احتياطية يتيمة بلا علامة: بعد holdAndRead يمكن أن يموت
-     *   الملف العملية بين النقل الذري وعلامة markActive — فالمسح يشمل مجلد
-     *   النسخ الاحتياطية نفسه بقواعد الحالة ذاتها: هرم أو عملية منتهية → حذف؛
-     *   RUNNING/INTERRUPTED → يُترك لحوار الاسترداد؛ بلا سجل → يُسترد ويُعاد
-     *   إدخاله (الطلب لم يبدأ قط).
-     * يعيد أزواج (opId، الطلب المخزّن) للطلبات التي لا يزال تنفيذها مطلوباً.
-     * آمن للاستدعاء المتكرر.
-     */
+    /** يقرأ الطلبات المعلّقة غير المنتهية عند بدء الخدمة ويحذف ملفاتها (تعاد كتابة العلامة عند بدء التنفيذ الجديد). */
     fun recoverActive(
         root: File,
         journal: org.openfilemanager.core.OpJournal,
@@ -399,8 +331,8 @@ object PendingRequestStore {
         val activeDir = File(root, ACTIVE_DIR)
         val deadline = System.currentTimeMillis() - staleMs
         val recovered = ArrayList<Pair<String, StoredOpRequest>>()
-        // [0.7.9] newDirectoryStream بدل listFiles (بوابة الجودة نفسها).
-        // (F-07) مجموعة المرشحين = العلامات + النسخ الاحتياطية اليتيمة.
+        // newDirectoryStream بدل listFiles (بوابة الجودة نفسها).
+        // مجموعة المرشحين = العلامات + النسخ الاحتياطية اليتيمة.
         val markerNames = runCatching {
             java.nio.file.Files.newDirectoryStream(activeDir.toPath()).use { stream ->
                 stream.map { it.fileName.toString() }.toSet()
@@ -446,7 +378,7 @@ object PendingRequestStore {
                 org.openfilemanager.core.OpState.RUNNING,
                 org.openfilemanager.core.OpState.INTERRUPTED -> {
                     // القرار (استئناف/إلغاء) لحوار الاسترداد من السجل لا من النسخة،
-                    // فلا يبقى إلا حذف العلامة والنسخة الاحتياطية (F-01/F-07).
+                    // فلا يبقى إلا حذف العلامة والنسخة الاحتياطية .
                     runCatching { marker.delete() }
                     removePending(root, opId)
                 }
@@ -467,14 +399,14 @@ object PendingRequestStore {
         return recovered
     }
 
-    /** [0.7.9] قراءة طلب معلّق دون استهلاك ملفه (لاسترداده مرة أخرى). */
+    /** قراءة طلب معلّق دون استهلاك ملفه (لاسترداده مرة أخرى). */
     private fun peek(root: File, opId: String): StoredOpRequest? {
         if (!validToken(opId)) return null
         return readStored(File(File(root, PENDING_BACKUP_DIR), opId))
     }
 
     /**
-     * [0.7.9] محو علامة «قيد التنفيذ» عند اكتمال العملية (نجاحاً أو فشلاً):
+     * محو علامة «قيد التنفيذ» عند اكتمال العملية (نجاحاً أو فشلاً):
      * البقاء بعد الانتهاء كان يعيد الطلب عند أول إقلاع قادم للخدمة.
      */
     fun clearActive(root: File, opId: String) {
@@ -482,7 +414,7 @@ object PendingRequestStore {
         runCatching { File(File(root, ACTIVE_DIR), opId).delete() }
     }
 
-    /** [0.7.9] كتابة نسخة احتياطية من الطلب باسم opId قبل تسليم النية (للاسترداد). */
+    /** كتابة نسخة احتياطية من الطلب باسم opId قبل تسليم النية (للاسترداد). */
     fun writePending(root: File, opId: String, kind: String, paths: List<String>, target: String?, extra: String? = null, selected: List<String>? = null) {
         require(validToken(opId)) { "invalid operation id" }
         require(kind in setOf(KIND_COPY, KIND_MOVE, KIND_DELETE, KIND_COMPRESS, KIND_EXTRACT)) { "invalid pending request kind" }
@@ -508,7 +440,7 @@ object PendingRequestStore {
         }
     }
 
-    /** [0.7.9] محو النسخة الاحتياطية عند اكتمال العملية (مع العلامة). */
+    /** محو النسخة الاحتياطية عند اكتمال العملية (مع العلامة). */
     fun removePending(root: File, opId: String) {
         if (!validToken(opId)) return
         runCatching { File(File(root, PENDING_BACKUP_DIR), opId).delete() }

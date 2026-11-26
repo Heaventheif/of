@@ -28,11 +28,6 @@ internal class PdfLexer(val b: ByteBuffer, var pos: Int = 0, private val allowRe
 
     private fun at(i: Int): Int = b.get(i).toInt() and 0xff
 
-    fun atEnd(): Boolean {
-        skipWs()
-        return pos >= limit
-    }
-
     fun skipWs() {
         while (pos < limit) {
             val c = at(pos)

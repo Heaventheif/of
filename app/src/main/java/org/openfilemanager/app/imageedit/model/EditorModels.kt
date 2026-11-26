@@ -25,7 +25,7 @@ enum class BrushStyle { PEN, MARKER, NEON }
 enum class TextAlignment { START, CENTER, END }
 
 /**
- * (تصحيح) الخطوط: كل عنصر يحمل اسم عائلة الخط في نظام أندرويد ومجموعة العرض.
+ * الخطوط: كل عنصر يحمل اسم عائلة الخط في نظام أندرويد ومجموعة العرض.
  * أندرويد لا يوفر خطوطاً عربية كثيرة، لذا الخطوط العربية هنا هي خطوط النظام
  * (نسخ/سانس بأوزان مختلفة) — ولإضافة خط مضمّن ضع ملف ttf في res/font وأضف عنصراً هنا.
  */
@@ -34,7 +34,7 @@ enum class EditorFontGroup { ARABIC, ENGLISH }
 enum class EditorFontFamily(
     val systemName: String,
     val group: EditorFontGroup,
-    /** (تصحيح) خط مضمّن في assets/fonts: يعمل على كل الأجهزة بغض النظر عن خطوط النظام. */
+    /** خط مضمّن في assets/fonts: يعمل على كل الأجهزة بغض النظر عن خطوط النظام. */
     val asset: String? = null,
     val assetBold: String? = null
 ) {
@@ -124,7 +124,7 @@ sealed interface EditLayer {
         val shadow: Boolean = false,
         val outline: Boolean = false,
         val outlineWidthPx: Float = 0f,
-        // (تصحيح) خيارات تنسيق إضافية
+        // خيارات تنسيق إضافية
         val italic: Boolean = false,
         val underline: Boolean = false,
         val strike: Boolean = false,
@@ -196,7 +196,7 @@ enum class ExportFormat(val extension: String, val compressFormat: Bitmap.Compre
 }
 
 /**
- * (تصحيح) أي الطبقات تتفاعل مع اللمس في كل أداة. كانت كل الطبقات تلتقط اللمس
+ * أي الطبقات تتفاعل مع اللمس في كل أداة. كانت كل الطبقات تلتقط اللمس
  * في كل الأدوات: صورة مضافة تغطي اللوحة كانت تبتلع سحب رسم الأشكال والنص، ويبقى
  * إطارها ظاهراً فوق الأداة الأخرى. الآن لكل أداة نوع طبقتها فقط.
  */
@@ -228,12 +228,7 @@ enum class CutMode {
 const val CUT_TOLERANCE_DEFAULT = 30
 const val CUT_EDGE_DEFAULT = 35
 
-/**
- * عملية قص على الصورة الأساس (بإحداثيات المستند). تُخزَّن كعمليات لا كبكسلات:
- * فيبقى الأصل سليماً، والتراجع/الإعادة خفيفين، وتُعاد العملية بنفس النتيجة
- * على المعاينة وعلى الدقة الكاملة عند التصدير. كل عملية قابلة لإعادة الضبط
- * (تنعيم/حساسية) بعد تنفيذها عبر [feather] وغيره دون إعادتها من جديد.
- */
+/** عملية قص على الصورة الأساس (بإحداثيات المستند). */
 sealed interface CutOp {
     /** تنعيم الحافة 0..100 (0 = حادة). */
     val feather: Int

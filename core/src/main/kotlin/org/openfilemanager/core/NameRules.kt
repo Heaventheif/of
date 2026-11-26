@@ -24,4 +24,26 @@ object NameRules {
     }
 
     fun isValid(name: String, strictFat: Boolean = true): Boolean = problem(name, strictFat) == null
+
+    /** يبني اسماً فريداً بصيغة «الاسم (n).ext» عند وجود تعارض. */
+    fun uniqueName(
+        base: String,
+        maxTries: Int = 100_000,
+        stripExtension: Boolean = true,
+        clashes: (String) -> Boolean
+    ): String {
+        if (!clashes(base)) return base
+        val dot = if (stripExtension) base.lastIndexOf('.') else -1
+        val stem = if (dot > 0) base.substring(0, dot) else base
+        val ext = if (dot > 0) base.substring(dot) else ""
+        var n = 1
+        while (n <= maxTries) {
+            val candidate = "$stem ($n)$ext"
+            if (!clashes(candidate)) return candidate
+            n++
+        }
+        // سقف المحاولات — غير متوقع الوصول إليه. نُرجع آخر مرشح بدل رمي استثناء
+        // حفاظاً على سلوك المواقع الأصلية التي كانت تكتفي بالحلقة.
+        return "$stem ($maxTries)$ext"
+    }
 }

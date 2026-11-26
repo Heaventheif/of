@@ -5,7 +5,6 @@ import java.nio.file.Files
 import java.nio.file.LinkOption
 import java.nio.file.Path
 import java.nio.file.Paths
-import java.nio.file.StandardCopyOption
 
 /** نتيجة استرداد تسمية جماعية انقطعت. */
 data class RenameRecovery(
@@ -18,31 +17,14 @@ data class RenameRecovery(
     val errors: List<String>
 )
 
-/**
- * استرداد العمليات الطويلة عند إقلاع التطبيق:
- * 1. العمليات بحالة RUNNING هي التي ماتت مع العملية (الخدمة تكتب إنهاءها دائماً).
- * 2. تُحذف الملفات المؤقتة `.fm-tmp-*` المتروكة في مجلدات الوجهة.
- * 3. يعرض المستخدم القرار: إكمال (استئناف) أو إلغاء؛ والتسمية الجماعية لها مسارها الخاص هنا.
- *
- * [parsePath] يفك مسارات السجل؛ الإنتاج يستخدم الافتراضي والاختبارات تحقن Jimfs
- * (نفس الحقنة في [FileOpEngine]).
- */
+/** استرداد العمليات الطويلة عند إقلاع التطبيق: 1. */
 object OpRecovery {
 
     /** العمليات التي انقطعت بموت العملية (لا سطر إنهاء لها). */
     fun interrupted(journal: OpJournal): List<OpRecord> =
         journal.ops().filter { it.state == OpState.RUNNING }
 
-    fun isInterrupted(journal: OpJournal, op: OpRecord): Boolean = op.state == OpState.RUNNING
-
-    /**
-     * العمليات الجديرة بفحص الانقطاع عند الإقلاع/إعادة إنشاء الواجهة:
-     * RUNNING/INTERRUPTED فقط، وباستثناء معرّفات العمليات التي تُنفَّذ الآن في
-     * هذه العملية الحية ([activeOpIds]) وعند وجود عمل خدمة نشط كلياً
-     * ([serviceBusy] = true) — سجل RUNNING لعملية يجري تنفيذها ليس «منقطعاً»،
-     * وإعلانه كذلك كان يعرض حوار الاسترداد زوراً أثناء إعادة إنشاء النشاط
-     * (تدوير/تغيير لغة/عودة للمهمة) وزر «إلغاء» فيه يحذف مؤقتات العملية الحية.
-     */
+    /** العمليات الجديرة بفحص الانقطاع عند الإقلاع/إعادة إنشاء الواجهة. */
     fun recoverableOps(
         ops: List<OpRecord>,
         activeOpIds: Set<String> = emptySet(),
@@ -55,12 +37,7 @@ object OpRecovery {
         }
     }
 
-    /**
-     * الضغط والاستخراج لا يُستأنفان من سجل العناصر: عنصرهما الوحيد (FILE) يمثل
-     * «المصدر ← الوجهة» لتنظيف المؤقتات فقط، واستئنافه عبر محرك النسخ كان ينسخ
-     * أول مصدر فوق مسار الـ zip أو ملف الأرشيف فوق مجلد الوجهة. يُلغيان ويُنظَّف
-     * مؤقتاهما ([abandonUnresumable]).
-     */
+    /** الضغط والاستخراج لا يُستأنفان من سجل العناصر. */
     fun isResumable(op: OpRecord): Boolean = op.kind != OpKind.COMPRESS && op.kind != OpKind.EXTRACT
 
     /**
@@ -72,7 +49,7 @@ object OpRecovery {
         ops: List<OpRecord>,
         activeOpIds: Set<String> = emptySet(),
         serviceBusy: Boolean = false,
-        message: String = "انقطعت بموت العملية"
+        message: String = CoreOpCode.OP_INTERRUPTED
     ): Int {
         if (serviceBusy) return 0
         var n = 0
@@ -104,25 +81,7 @@ object OpRecovery {
         return n
     }
 
-    /** يعلّم العملية INTERRUPTED حتى لا تُكشف مرة أخرى عند الإقلاع التالي. */
-    fun markInterrupted(journal: OpJournal, op: OpRecord) {
-        journal.finishOp(op.id, OpState.INTERRUPTED, op.ok, op.failed, op.skipped, "انقطعت بموت العملية")
-    }
-
-    /**
-     * يحذف الملفات المؤقتة المتروكة من عملية انقطعت. `.fm-tmp-*` (نسخ AtomICIO)
-     * و`.fm-replaced-*` (إزاحة الهدف عند الاستبدال) لا يعرف اسمها العشوائي
-     * السجل فيُمسح كل ما بدأ بالبادئة في مجلد وجهة كل عنصر لم يكتمل.
-     * [AtomicIO] ينظف مؤقته عند الفشل الطبيعي، فهذا المسح لموت العملية
-     * المفاجئ فقط. إعادة الترتيب من `.fm-replaced-*` إلى هدفها المفقود خارج
-     * النطاق عمداً (لا نعرف إن كانت النسخة الجديدة اكتملت) — يُحذف فحسب.
-     * يعيد عدد ما حُذف.
-     *
-     * نسخ استبدال الأرشيف `.fm-replace-backup-*` **مستثناة هنا عمداً**:
-     * هي بيانات مستخدم أصيلة (المجلد القديم نفسه)، ومصيرها يحسمه
-     * [ReplaceBackupRecovery.reconcile] وحده وفق سجل أوامر الاستبدال الدائم
-     * وسجل العمليات — لا منظّف المؤقتات العامة.
-     */
+    /** يحذف الملفات المؤقتة المتروكة من عملية انقطعت. */
     fun cleanupTemps(
         journal: OpJournal,
         op: OpRecord,
@@ -157,30 +116,11 @@ object OpRecovery {
         return removed
     }
 
-    /** بادئات مؤقتات العمليات التي قد تُترك بموت العملية (منظفات التمهيد 3.3).
+    /** بادئات مؤقتات العمليات التي قد تُترك بموت العملية (منظفات التمهيد).
      *  لا تشمل `.fm-replace-backup-` — انظر تعليق [cleanupTemps]. */
     val LEFTOVER_TEMP_PREFIXES = arrayOf(".fm-tmp-", ".fm-replaced-")
 
-    /**
-     * منظف تمهيد: يمسح مؤقتات العمليات القديمة من مجلدات وجهاتها — `.fm-tmp-*`
-     * و`.fm-replaced-*` (تنظيف الانقطاع أعلاه يغطيها أيضاً)، و`.fm-extract-*`
-     * و`.fm-merge-*` و`.fm-tmp-zip-*` (استخراج/دمج/ضغط الأرشيف، لا مجلد وجهة
-     * لها في سجل عناصر FILE فلا يصل إليها cleanupTemps).
-     *
-     * `.fm-replace-backup-*` **ليست مؤقتة** — هي المجلد القديم نفسه عند
-     * استبداله باستخراج أرشيف، ويحسم مصيرها [ReplaceBackupRecovery] وحده.
-     * حذفها هنا كان يمحو بيانات المستخدم عند موت العملية وسط استبدال.
-     *
-     * يشمل فقط مجلدات سجلات العمليات (dirs of journaled ops) — لا يُمسح مجلد
-     * يتصفحه المستخدم ولا أي مسار آخر، احتياطاً من حذف ملفات مستخدم تحمل
-     * الاسم بالصدفة.
-     *
-     * [minAgeMs] حد أمان: لا يُحذف مؤقت أحدث منه — عملية خدمة قد تكون بدأت
-     * للتو (فحص الانقطاع 1.2 يستثنيها من الأساس، وهذا طبقة ثانية).
-     * [nowMillis] يُحقن للاختبار.
-     *
-     * @return عدد ما حُذف (للتسجيل فقط).
-     */
+    /** منظف تمهيد: يمسح مؤقتات العمليات القديمة من مجلدات وجهاتها — `.fm-tmp-*` و`.fm-replaced-*` (تنظيف الانقطاع أعلاه يغطيها أيضاً)، و`.fm-extract-*`. */
     fun cleanupStaleTemps(
         journal: OpJournal,
         minAgeMs: Long = STALE_TEMP_MIN_AGE_MS,
@@ -220,13 +160,7 @@ object OpRecovery {
     /** حد أمان عمر المؤقت القابل للحذف: ساعة واحدة. */
     const val STALE_TEMP_MIN_AGE_MS = 60L * 60 * 1000
 
-    /**
-     * يسترد تسمية جماعية انقطعت (سجل [JournalRenameAdapter]):
-     * عنصر DONE وصل نهائيه؛ PENDING لم يُلمس؛ RUNNING وصل الاسم المؤقت.
-     * - [complete] = true: المؤقت يذهب لاسمه النهائي، والـPENDING يُنفذ (مرحلتان)،
-     *   فإن كانت الوجهة محجوزة يُعاد الاسم الأصلي ولا يُكتب فوق شيء أبداً.
-     * - [complete] = false: كل مؤقت يعود لاسمه الأصلي، والـPENDING يبقى كما كان.
-     */
+    /** يسترد تسمية جماعية انقطعت (سجل [JournalRenameAdapter]): عنصر DONE وصل نهائيه؛ */
     fun recoverRename(
         journal: OpJournal,
         opId: String,
@@ -234,8 +168,8 @@ object OpRecovery {
         parsePath: (String) -> Path = { Paths.get(it) }
     ): RenameRecovery {
         val record = journal.op(opId)
-            ?: return RenameRecovery(0, 0, 0, listOf("لا توجد عملية بهذا المعرف: $opId"))
-        if (record.kind != OpKind.RENAME) return RenameRecovery(0, 0, 0, listOf("ليست عملية تسمية"))
+            ?: return RenameRecovery(0, 0, 0, listOf(CoreOpCode.message(CoreOpCode.NO_OPERATION, opId)))
+        if (record.kind != OpKind.RENAME) return RenameRecovery(0, 0, 0, listOf(CoreOpCode.NOT_RENAME_OP))
 
         var finished = 0
         var restored = 0
@@ -257,14 +191,14 @@ object OpRecovery {
 
                     tempExists -> {
                         if (complete && !toExists) {
-                            Files.move(temp, to, StandardCopyOption.ATOMIC_MOVE)
+                            AtomicIO.moveNoReplace(temp, to)
                             journal.updateItem(opId, item.index, ItemState.DONE)
                             finished++
                         } else {
-                            Files.move(temp, from)
+                            AtomicIO.moveNoReplace(temp, from)
                             journal.updateItem(
                                 opId, item.index, ItemState.SKIPPED,
-                                error = if (toExists) "الوجهة موجودة؛ أُعيد الاسم الأصلي" else "أُلغيت"
+                                error = if (toExists) CoreOpCode.DESTINATION_EXISTS_RESTORED else CoreOpCode.CANCELLED
                             )
                             restored++
                         }
@@ -272,19 +206,19 @@ object OpRecovery {
 
                     fromExists ->
                         if (complete && !toExists) {
-                            Files.move(from, temp)
-                            Files.move(temp, to, StandardCopyOption.ATOMIC_MOVE)
+                            AtomicIO.moveNoReplace(from, temp)
+                            AtomicIO.moveNoReplace(temp, to)
                             journal.updateItem(opId, item.index, ItemState.DONE)
                             finished++
                         } else if (toExists) {
-                            journal.updateItem(opId, item.index, ItemState.SKIPPED, error = "الوجهة موجودة")
+                            journal.updateItem(opId, item.index, ItemState.SKIPPED, error = CoreOpCode.DESTINATION_EXISTS)
                             leftAsIs++
                         } else {
                             leftAsIs++
                         }
 
                     else -> {
-                        journal.updateItem(opId, item.index, ItemState.SKIPPED, error = "المصدر غير موجود")
+                        journal.updateItem(opId, item.index, ItemState.SKIPPED, error = CoreOpCode.SOURCE_MISSING)
                         leftAsIs++
                     }
                 }
@@ -296,8 +230,8 @@ object OpRecovery {
 
         journal.finishOp(
             opId, OpState.FINISHED, finished, errors.size, leftAsIs,
-            if (complete) "استرداد التسمية: أكمل $finished، أعاد $restored"
-            else "إلغاء التسمية: أعاد $restored لاسمه الأصلي"
+            if (complete) CoreOpCode.message(CoreOpCode.RECOVERY_SUMMARY, finished, restored)
+            else CoreOpCode.message(CoreOpCode.UNDO_SUMMARY, restored)
         )
         return RenameRecovery(finished, restored, leftAsIs, errors)
     }

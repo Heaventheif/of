@@ -1,5 +1,6 @@
 package org.openfilemanager.app.ui
 
+import org.openfilemanager.app.ui.components.kindLabelRes
 import org.openfilemanager.app.ui.components.SnackKind
 import org.openfilemanager.app.ui.components.show
 import android.content.Context
@@ -7,19 +8,9 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Environment
 import android.provider.Settings
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.navigationBarsPadding
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -28,9 +19,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.Home
-import androidx.compose.material.icons.outlined.PhotoLibrary
 import androidx.compose.material.icons.outlined.Storage
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -53,7 +42,6 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.rememberDrawerState
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import kotlinx.coroutines.Dispatchers
@@ -75,22 +63,23 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import java.io.File
 import org.openfilemanager.app.AppLog
 import org.openfilemanager.app.BidiText
+import org.openfilemanager.app.FeatureFlags
 import org.openfilemanager.app.LibraryTab
 import org.openfilemanager.app.MusicPlaybackService
 import org.openfilemanager.app.OpRecoveryActions
-import org.openfilemanager.app.OpRequest
 import org.openfilemanager.app.R
 import org.openfilemanager.app.appContainer
 import org.openfilemanager.app.reader.DocumentReaderScreen
 import org.openfilemanager.app.reader.ReaderRouting
 import org.openfilemanager.app.imageedit.ui.ImageEditorScreen
-import org.openfilemanager.app.ui.theme.Dim
 import org.openfilemanager.app.ui.screens.BrowserScreen
 import org.openfilemanager.app.ui.screens.HomeScreen
 import org.openfilemanager.app.ui.screens.ImageViewerScreen
 import org.openfilemanager.app.ui.screens.MediaScreen
 import org.openfilemanager.app.ui.screens.MiniPlayer
+import org.openfilemanager.app.ui.screens.OperationHistoryScreen
 import org.openfilemanager.app.ui.screens.PlayerScreen
+import org.openfilemanager.app.ui.screens.RecoveryCenterScreen
 import org.openfilemanager.app.ui.screens.SettingsScreen
 import org.openfilemanager.app.ui.screens.TextEditorScreen
 import org.openfilemanager.core.ConflictDecision
@@ -98,7 +87,6 @@ import org.openfilemanager.core.ConflictPolicy
 import org.openfilemanager.core.FileKind
 import org.openfilemanager.core.FileKinds
 import org.openfilemanager.core.OpKind
-import org.openfilemanager.core.OpRecord
 
 /** One snackbar host for the whole app so operation results show on whichever screen is open. */
 val LocalSnack = staticCompositionLocalOf<SnackbarHostState> { error("SnackbarHostState not provided") }
@@ -115,6 +103,10 @@ sealed interface Route {
     data class Player(val returnTo: Route) : Route
     data object Settings : Route
     data object Recent : Route
+
+    data object RecoveryCenter : Route
+
+    data object OperationHistory : Route
 }
 
 /** Holds the current screen so it survives rotation. */
@@ -129,7 +121,7 @@ class NavViewModel : ViewModel() {
             FileKind.IMAGE -> route = Route.Viewer(listOf(path), 0, returnTo)
             FileKind.TEXT, FileKind.CODE -> route = Route.Editor(path, readOnly, returnTo)
             FileKind.AUDIO -> {
-                // (F-03) مسارات محلية خام للمشغل: الخدمة تحوّلها لأصل تشغيل بنفسها
+                // مسارات محلية خام للمشغل: الخدمة تحوّلها لأصل تشغيل بنفسها
                 // وتقرأ الوسوم والكلمات من المسار مباشرة — FileProvider كان يحوّلها
                 // إلى content:// فتفشل الوسوم والكلمات الجانبية.
                 MusicPlaybackService.start(ctx, listOf(path), 0)
@@ -269,7 +261,30 @@ fun OfmApp() {
                 )
                 is Route.Reader -> DocumentReaderScreen(route.path, onBack = { nav.route = route.returnTo })
                 is Route.Player -> PlayerScreen(onBack = { nav.route = route.returnTo })
-                Route.Settings -> SettingsScreen(browser, onBack = { nav.route = Route.Home })
+                Route.Settings -> SettingsScreen(
+                    browser,
+                    onBack = { nav.route = Route.Home },
+                    onOpenRecoveryCenter = { nav.route = Route.RecoveryCenter },
+                    onOpenOperationHistory = { nav.route = Route.OperationHistory }
+                )
+                Route.RecoveryCenter -> {
+                    // بوابة التنقل (الحماية الأولى فوق نقطة دخول الشاشة): العلم
+                    // مطفأ يعني لا مسار للشاشة — رجوع فوري للإعدادات.
+                    if (FeatureFlags.recoveryCenter) {
+                        RecoveryCenterScreen(onBack = { nav.route = Route.Settings })
+                    } else {
+                        LaunchedEffect(Unit) { nav.route = Route.Settings }
+                    }
+                }
+                Route.OperationHistory -> {
+                    // بوابة التنقل (الحماية الأولى فوق نقطة دخول الشاشة): العلم
+                    // مطفأ يعني لا مسار للشاشة — رجوع فوري للإعدادات.
+                    if (FeatureFlags.operationHistory) {
+                        OperationHistoryScreen(onBack = { nav.route = Route.Settings })
+                    } else {
+                        LaunchedEffect(Unit) { nav.route = Route.Settings }
+                    }
+                }
                 Route.Recent -> org.openfilemanager.app.ui.screens.RecentScreen(
                     onOpenFile = { f -> nav.openFile(ctx, f.absolutePath, readOnly = false, returnTo = Route.Recent) },
                     bottomBar = bottomBar
@@ -320,19 +335,7 @@ private fun ConflictHost() {
     )
 }
 
-/**
- * (F-01) حوار استرداد العمليات المنقطعة — الواجهة التي كانت موعودة بالرسائل
- * وغير موصولة بمحرك الاسترداد. عند بدء التطبيق وعند عودته (ON_RESUME) يقوم
- * OpsCenter بفحص OpJournal، وما وُجد منقطعاً فعلاً (RUNNING/INTERRUPTED بلا
- * تنفيذ حي) يُعرض هنا: المصدر والوجهة والنوع والعدد المنجز، مع الاستئناف
- * (الأنواع القابلة للاستئناف) أو الإلغاء والتنظيف، وللتسمية إكمال/تراجع بمسارها الخاص.
- *
- * (دلالة الإغلاق) الضغط خارج الحوار أو زر الرجوع لا يقرر شيئاً: يُؤجَّل
- * السؤال فقط (يخفى حتى إقلاع التشغيل التالي؛ السجل يبقى RUNNING فلا تنظيف
- * ولا إلغاء) — الإلغاء والاستئناف يتطلبان زراً صريحاً. القرار نفسه يعمل
- * في نطاق العملية (لا نطاق الواجهة) فلا يُقتل منتصفه بتدوير الشاشة، واستئناف
- * مُرسَل لا يُعرض مرة ثانية (OpsCenter.isResumeDispatched).
- */
+/** حوار استرداد العمليات المنقطعة — الواجهة التي كانت موعودة بالرسائل وغير موصولة بمحرك الاسترداد. */
 @Composable
 private fun RecoveryHost() {
     val ctx = LocalContext.current
@@ -391,16 +394,7 @@ private fun RecoveryHost() {
         }
     }
 
-    val kindLabel = stringResource(
-        when (op.kind) {
-            OpKind.COPY -> R.string.op_kind_copy
-            OpKind.MOVE -> R.string.op_kind_move
-            OpKind.DELETE -> R.string.op_kind_delete
-            OpKind.RENAME -> R.string.op_kind_rename
-            OpKind.COMPRESS -> R.string.op_kind_compress
-            OpKind.EXTRACT -> R.string.op_kind_extract
-        }
-    )
+    val kindLabel = stringResource(kindLabelRes(op.kind))
     val src = BidiText.wrap(op.sources.firstOrNull() ?: op.targetDir)
     val dst = BidiText.wrap(op.targetDir.ifEmpty { op.sources.firstOrNull() ?: "" })
     AlertDialog(
@@ -454,12 +448,7 @@ private fun NotificationPermissionRequest() {
     }
 }
 
-/**
- * Asks for All-files access once, with a clear explanation, and re-checks when the user returns
- * from Settings. Denying it no longer blocks the app: a limited mode keeps the app-storage
- * browser (and everything that works on plain paths) fully functional — the same composition
- * hosts both modes, so returning from Settings loses no navigation state.
- */
+/** Asks for All-files access once, with a clear explanation, and re-checks when the user returns from Settings. */
 @Composable
 fun PermissionGate(content: @Composable () -> Unit) {
     val ctx = LocalContext.current

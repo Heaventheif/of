@@ -5,7 +5,6 @@ import android.graphics.Bitmap
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -23,8 +22,6 @@ import org.openfilemanager.app.imageedit.engine.ImageDecoder
 import org.openfilemanager.app.imageedit.engine.ImageExporter
 import org.openfilemanager.app.imageedit.engine.ImageRenderer
 import org.openfilemanager.app.imageedit.model.BrushStyle
-import org.openfilemanager.app.imageedit.model.CUT_EDGE_DEFAULT
-import org.openfilemanager.app.imageedit.model.CUT_TOLERANCE_DEFAULT
 import org.openfilemanager.app.imageedit.model.CutMode
 import org.openfilemanager.app.imageedit.model.CutOp
 import org.openfilemanager.core.imageedit.CutShape
@@ -41,7 +38,6 @@ import org.openfilemanager.app.imageedit.model.withTolerance
 import org.openfilemanager.core.imageedit.Adjust
 import org.openfilemanager.core.imageedit.CutAlgorithms
 import org.openfilemanager.core.imageedit.CutShapes
-import org.openfilemanager.core.imageedit.EditHistory
 import org.openfilemanager.core.imageedit.FilterPreset
 import org.openfilemanager.core.imageedit.FloatRect
 import org.openfilemanager.core.imageedit.ImageTransform
@@ -55,64 +51,6 @@ import java.util.concurrent.atomic.AtomicLong
  */
 class ImageEditorViewModel(app: Application, val imagePath: String) : AndroidViewModel(app),
     EditorCanvasController {
-
-    data class EditorUiState(
-        val loading: Boolean = true,
-        val failed: Boolean = false,
-        val name: String = "",
-        val docW: Float = 1f,
-        val docH: Float = 1f,
-        /** مقياس المعاينة: بكسل معاينة لكل وحدة مستند (< 1). */
-        val previewScale: Float = 1f,
-        val transform: ImageTransform = ImageTransform(),
-        /** تعديلات الصورة الأساس (الإضاءة/الألوان/الفلاتر/التظليل الحوافي). */
-        val adjust: Adjust = Adjust(),
-        val layers: List<EditLayer> = emptyList(),
-        val selectedLayerId: Long? = null,
-        val tool: EditorTool = EditorTool.NONE,
-        val canUndo: Boolean = false,
-        val canRedo: Boolean = false,
-        val dirty: Boolean = false,
-        val saving: Boolean = false,
-        // إعدادات الأدوات (خارج التاريخ)
-        val drawColor: Long = 0xFF00E476,
-        val drawWidthScreenPx: Float = 8f,
-        val drawStyle: BrushStyle = BrushStyle.PEN,
-        val drawEraser: Boolean = false,
-        val shapeKind: ShapeKind = ShapeKind.RECT,
-        val shapeStrokeColor: Long = 0xFF00E476,
-        val shapeFillColor: Long? = null,
-        val shapeWidthScreenPx: Float = 8f,
-        // القص الحر وقص الخلفية
-        val cutOps: List<CutOp> = emptyList(),
-        val cutMode: CutMode = CutMode.KEEP,
-        /** شكل حدود القصّ في وضعي الإبقاء والمسح: حر أو مربع/دائرة... */
-        val cutShape: CutShape = CutShape.FREE,
-        val cutTolerance: Int = CUT_TOLERANCE_DEFAULT,
-        /** إحكام الحواف 0..100: يمنع نزيف قصّ الخلفية عبر الحواف الناعمة. */
-        val cutEdge: Int = CUT_EDGE_DEFAULT,
-        /** تنعيم حافة القصّ 0..100 (0 = حادة). */
-        val cutFeather: Int = 0,
-        /** سماكة فرش الممحاة/الاستعادة/الموزاييك على الشاشة. */
-        val cutBrushScreenPx: Float = 36f,
-        /** صلابة الفرش 100 = حافة حادة. */
-        val cutBrushHardness: Int = 100
-    ) {
-        val selected: EditLayer? get() = layers.firstOrNull { it.id == selectedLayerId }
-    }
-
-    /** عنصر قصّ حي قيد الرسم على القماش (يُعرض كتراكب ولا يدخل التاريخ حتى يُثبَّت). */
-    data class LiveCut(
-        val mode: CutMode,
-        val points: List<Pair<Float, Float>>,
-        val brushScreenPx: Float = 0f
-    )
-
-    sealed interface EditorEvent {
-        data class Message(val res: Int, val arg: String? = null) : EditorEvent
-        data class Saved(val path: String) : EditorEvent
-        data class Failed(val res: Int) : EditorEvent
-    }
 
     private data class Snapshot(
         val transform: ImageTransform,
@@ -135,8 +73,6 @@ class ImageEditorViewModel(app: Application, val imagePath: String) : AndroidVie
     val liveCut: StateFlow<LiveCut?> = _liveCut.asStateFlow()
 
     private val _showOriginal = MutableStateFlow(false)
-    /** «قبل»: اضغط مع الاستمرار على زر المقارنة لعرض الأصل بلا أي تعديل. */
-    val showOriginal: StateFlow<Boolean> = _showOriginal.asStateFlow()
 
     private val _thumbBase = MutableStateFlow<Bitmap?>(null)
     /** نسخة مصغّرة من الأصل لمعاينة الفلاتر في لوحة التعديل. */
@@ -145,17 +81,16 @@ class ImageEditorViewModel(app: Application, val imagePath: String) : AndroidVie
     private var basePreview: Bitmap? = null
     private var originalPreview: Bitmap? = null
     private var exifOrientation = 1
-    private val history = EditHistory<Snapshot>()
-    private var initialSnap: Snapshot = Snapshot(ImageTransform(), Adjust(), emptyList())
+
+    /** التاريخ/الجلسة مستخلَصان إلى ImageEditHistory — صنف عادي بلا أندرويد يحمل قواعد التسجيل والدمج والاتساخ نفسها. */
+    private val history = ImageEditHistory(
+        baseline = Snapshot(ImageTransform(), Adjust(), emptyList())
+    )
     private var renderJob: Job? = null
-    /** (تصحيح) إشارة إعادة رسم مدموجة: طلبات كثيرة متلاحقة = رسم واحد بأحدث حالة. */
+    /** إشارة إعادة رسم مدموجة: طلبات كثيرة متلاحقة = رسم واحد بأحدث حالة. */
     private val renderSignal = Channel<Unit>(Channel.CONFLATED)
     private val idGen = AtomicLong(1)
-    private var gestureRecording = false
-    private var sliderRecording = false
     private var gestureLayer: EditLayer? = null
-    private var eraseRecorded = false
-    private var lastTextRecordAt = 0L
     /** نقاط فرش القصّ الجارية (قائمة غير قابلة للتعديل تُستبدل بكل نقطة). */
     private var brushPoints: List<Pair<Float, Float>>? = null
 
@@ -190,7 +125,7 @@ class ImageEditorViewModel(app: Application, val imagePath: String) : AndroidVie
                 )
             }.getOrNull()
             val scale = decoded.width.toFloat() / bounds.width
-            initialSnap = Snapshot(ImageTransform(), Adjust(), emptyList())
+            history.resetSessionBaseline(Snapshot(ImageTransform(), Adjust(), emptyList()))
             _state.value = _state.value.copy(
                 loading = false,
                 name = path.fileName?.toString() ?: imagePath.substringAfterLast('/'),
@@ -207,19 +142,8 @@ class ImageEditorViewModel(app: Application, val imagePath: String) : AndroidVie
         }
     }
 
-    /**
-     * (تصحيح) حلقة الرسم. الشيفرة القديمة كانت تؤخّر كل طلب 24 مللي وتلغي السابق،
-     * فأثناء السحب المتواصل (فرشاة، تحريك صورة، تدوير) يصل حدث جديد كل بضعة
-     * مللي فيُلغى الرسم دائماً ولا يظهر شيء حتى يتوقف الإصبع — وهذا سبب تأخر ظهور
-     * الرسم وانفصال الصورة عن إطار التحكم. وكان الرسم المُلغى يعمل أصلاً على خيوط
-     * متوازية وقد ينشر نتيجة قديمة بعد الأحدث.
-     *
-     * الآن عامل واحد متسلسل: يرسم أحدث حالة فور فراغه، والطلبات أثناء الرسم تُدمج
-     * في طلب واحد — لا تجويع ولا تراجع إلى نتيجة قديمة.
-     */
+    /** حلقة الرسم. الشيفرة القديمة كانت تؤخّر كل طلب 24 مللي وتلغي السابق، فأثناء السحب المتواصل. */
     private fun startRenderLoop() {
-        // (تصحيح M4) نحتفظ بمهمة الحلقة كي يصحّ إلغاؤها فعلاً عند onCleared
-        // (كان renderJob لا يُسند شيئاً فيلغى الإلغاء لا شيء).
         renderJob = viewModelScope.launch(AppDispatchers.compute.limitedParallelism(1)) {
             for (signal in renderSignal) {
                 val base = basePreview ?: continue
@@ -238,7 +162,6 @@ class ImageEditorViewModel(app: Application, val imagePath: String) : AndroidVie
                     liveStroke?.let { add(it) }
                     liveShape?.let { add(it) }
                 }
-                // (تصحيح M4) فشل الرسم لا يُهمل صامتاً: محاولة إضافية ثم إبقاء آخر معاينة ناجحة
                 val renderBase = runCatching { cutBaseFor(base, s) }.getOrDefault(base)
                 var rendered = runCatching {
                     ImageRenderer.render(renderBase, t, s.layers + extras, s.previewScale, opaqueBackground = false, adjust = s.adjust)
@@ -291,10 +214,6 @@ class ImageEditorViewModel(app: Application, val imagePath: String) : AndroidVie
     override fun onCleared() {
         renderSignal.close()
         renderJob?.cancel()
-        // (تصحيح IE-04/F14b-استعادة) لا recycle صريح لـ basePreview: الإلغاء تعاوني
-        // والمهمة قد تكون داخل كتلة الرسم فتستخدم بت ماب معاد تدويره (انهيار
-        // "Canvas: trying to use a recycled bitmap"). البت ماب على API 26+
-        // يُحررها جامع النفايات فور انعدام المراجع.
         basePreview = null
         CutEngine.releaseCaches()
         super.onCleared()
@@ -310,14 +229,14 @@ class ImageEditorViewModel(app: Application, val imagePath: String) : AndroidVie
         return s.copy(
             canUndo = history.canUndo,
             canRedo = history.canRedo,
-            dirty = snap != initialSnap
+            dirty = history.isDirty(snap)
         )
     }
 
     /** تعديل يسجّل في التاريخ. */
     private fun mutate(record: Boolean = true, block: (EditorUiState) -> EditorUiState) {
         val s = _state.value
-        if (record && !gestureRecording && !sliderRecording) history.record(snapshotOf(s))
+        history.recordForMutation(snapshotOf(s), record)
         _state.value = refreshFlags(block(s))
         requestRender()
     }
@@ -325,25 +244,23 @@ class ImageEditorViewModel(app: Application, val imagePath: String) : AndroidVie
     /** بداية إيماءة سحب متواصلة: تسجيل واحد للسحبة كاملة لا لكل إطار. */
     override fun beginGesture() {
         val s = _state.value
-        if (!gestureRecording && !sliderRecording) history.record(snapshotOf(s))
-        gestureRecording = true
+        history.beginGesture(snapshotOf(s))
         gestureLayer = s.selected
     }
 
     override fun endGesture() {
-        gestureRecording = false
+        history.endGesture()
         gestureLayer = null
         _state.value = refreshFlags(_state.value)
     }
 
     /** بداية سحب منزلق: تسجيل مرة واحدة حتى انتهاء السحب. */
     fun beginSliderCommit() {
-        if (!sliderRecording && !gestureRecording) history.record(snapshotOf(_state.value))
-        sliderRecording = true
+        history.beginSliderCommit(snapshotOf(_state.value))
     }
 
     fun endSliderCommit() {
-        sliderRecording = false
+        history.endSliderCommit()
         _state.value = refreshFlags(_state.value)
     }
 
@@ -377,7 +294,7 @@ class ImageEditorViewModel(app: Application, val imagePath: String) : AndroidVie
     fun selectTool(tool: EditorTool) {
         val cur = _state.value
         val newTool = if (cur.tool == tool) EditorTool.NONE else tool
-        // (تصحيح) لا يبقى تحديد طبقة من نوع لا تخص الأداة الجديدة (إطارها كان يبقى فوق الأداة)
+        // لا يبقى تحديد طبقة من نوع لا تخص الأداة الجديدة (إطارها كان يبقى فوق الأداة)
         val keep = cur.selected?.takeIf { it.isInteractiveWith(newTool) }?.id
         _state.value = cur.copy(tool = newTool, selectedLayerId = keep)
         clearLive()
@@ -589,10 +506,7 @@ class ImageEditorViewModel(app: Application, val imagePath: String) : AndroidVie
 
     fun updateSelectedText(record: Boolean = true, block: (EditLayer.Text) -> EditLayer.Text) {
         // دمج نقرات الكتابة المتلاحقة: تسجيل واحد كل مهلة قصيرة لا لكل حرف
-        val doRecord = if (record) {
-            val now = System.currentTimeMillis()
-            if (now - lastTextRecordAt > 800) { lastTextRecordAt = now; true } else false
-        } else false
+        val doRecord = history.shouldRecordTextEdit(record)
         mutate(doRecord) { s ->
             val sel = s.selected as? EditLayer.Text ?: return@mutate s
             s.copy(layers = s.layers.map { if (it.id == sel.id) block(it as EditLayer.Text) else it })
@@ -684,19 +598,12 @@ class ImageEditorViewModel(app: Application, val imagePath: String) : AndroidVie
         mutate { s -> s.copy(transform = s.transform.withFreeRotation(degrees)) }
     }
 
-    /** (تصحيح F19-استعادة) التدوير الحر أثناء سحب المنزلق: بلا تسجيل تاريخ لكل
-     *  إطار — يسجّل beginSliderCommit مرة واحدة وتُغلق endSliderCommit.
-     *  بدونه يغرق سحب واحد تاريخ التراجع ويمسح الإدخالات القديمة. */
     fun setFreeRotationLive(degrees: Float) {
         mutate(record = false) { s -> s.copy(transform = s.transform.withFreeRotation(degrees)) }
     }
 
     fun applyCrop(rect: FloatRect?) {
         mutate { s -> s.copy(transform = s.transform.withCrop(rect)) }
-    }
-
-    fun resetCrop() {
-        mutate { s -> s.copy(transform = s.transform.withCrop(null)) }
     }
 
     fun resetTransform() {
@@ -708,7 +615,7 @@ class ImageEditorViewModel(app: Application, val imagePath: String) : AndroidVie
 
     override fun onCanvasTap(docX: Float, docY: Float) {
         val s = _state.value
-        val hit = layerAt(docX, docY, s)
+        val hit = layerHit(docX, docY, s)
         if (hit != s.selectedLayerId) {
             _state.value = _state.value.copy(selectedLayerId = hit)
         }
@@ -717,7 +624,7 @@ class ImageEditorViewModel(app: Application, val imagePath: String) : AndroidVie
     override fun onLayerMove(deltaDocX: Float, deltaDocY: Float) {
         if (_state.value.selectedLayerId == null) return
         mutate(record = false) { s ->
-            s.copy(layers = s.layers.map { it.movedBy(deltaDocX, deltaDocY) })
+            s.copy(layers = s.layers.map { it.movedBy(deltaDocX, deltaDocY, s.selectedLayerId) })
         }
     }
 
@@ -754,11 +661,11 @@ class ImageEditorViewModel(app: Application, val imagePath: String) : AndroidVie
     }
 
     override fun onEraseStrokeAt(docX: Float, docY: Float, start: Boolean) {
-        if (start) eraseRecorded = false
+        if (start) history.beginOneShot()
         val s = _state.value
-        val hit = layerAt(docX, docY, s) ?: return
+        val hit = layerHit(docX, docY, s) ?: return
         val layer = s.layers.firstOrNull { it.id == hit } as? EditLayer.Stroke ?: return
-        if (!eraseRecorded) { history.record(snapshotOf(s)); eraseRecorded = true }
+        history.recordOneShot(snapshotOf(s))
         mutate(record = false) { st ->
             st.copy(layers = st.layers.filterNot { it.id == layer.id })
         }
@@ -853,116 +760,36 @@ class ImageEditorViewModel(app: Application, val imagePath: String) : AndroidVie
         requestRender()
     }
 
-    // ------------------------------------------------------------------
-    // الاستخدام الداخلي
+    // ------------------------------------------------------------------ الحفظ — التدفق مفصول إلى ImageExportController: نفس التسلسل حرفياً (حارس saving →…
 
-    private fun layerAt(docX: Float, docY: Float, s: EditorUiState): Long? {
-        val slop = 12f / s.previewScale // تسامح لمس بوحدات المستند
-        for (layer in s.layers.asReversed()) {
-            if (!layer.visible) continue
-            // الطبقات المسموح لمسها تتبع الأداة الحالية، والممحاة تلتقط الضربات
-            val eligible = layer.isInteractiveWith(s.tool) ||
-                (s.tool == EditorTool.DRAW && layer is EditLayer.Stroke)
-            if (!eligible) continue
-            if (ImageRenderer.hitTest(layer, docX, docY, s.docW, s.docH, slop)) return layer.id
+    private val exportCtl = ImageExportController(
+        scope = viewModelScope,
+        imagePath = imagePath,
+        getState = { _state.value },
+        setSaving = { saving -> _state.value = _state.value.copy(saving = saving) },
+        emit = { _events.tryEmit(it) },
+        saveFailedRes = R.string.ie_save_failed,
+        replaceFailedRes = R.string.ie_replace_failed,
+        saveAsCopyOp = { snapshot, baseName, format, quality, scale ->
+            ImageExporter.saveAsCopy(
+                getApplication(), imagePath, snapshot.transform, snapshot.layers, snapshot.cutOps,
+                baseName, format, quality, adjust = snapshot.adjust, scale = scale
+            )
+        },
+        replaceOriginalOp = { snapshot, quality ->
+            ImageExporter.replaceOriginal(
+                getApplication(), imagePath, snapshot.transform, snapshot.layers, snapshot.cutOps,
+                quality, adjust = snapshot.adjust
+            )
         }
-        return null
-    }
-
-    private fun EditLayer.movedBy(dx: Float, dy: Float): EditLayer = when (this) {
-        is EditLayer.Text -> if (id == _state.value.selectedLayerId) copy(centerX = centerX + dx, centerY = centerY + dy) else this
-        is EditLayer.Image -> if (id == _state.value.selectedLayerId) copy(centerX = centerX + dx, centerY = centerY + dy) else this
-        is EditLayer.Stroke -> if (id == _state.value.selectedLayerId)
-            copy(centerX = centerX + dx, centerY = centerY + dy, points = points.map { Pair(it.first + dx, it.second + dy) }) else this
-        is EditLayer.Shape -> if (id == _state.value.selectedLayerId)
-            copy(centerX = centerX + dx, centerY = centerY + dy, x1 = x1 + dx, y1 = y1 + dy, x2 = x2 + dx, y2 = y2 + dy) else this
-    }
-
-    // ------------------------------------------------------------------
-    // الحفظ
+    )
 
     /** @param scale تغيير حجم المخرَج: 1 = القرار الأصلي (بعد القصّ)، وأقل للتصغير. */
     fun saveCopy(baseName: String, format: ExportFormat, quality: Int, scale: Float = 1f) {
-        if (_state.value.saving) return
-        _state.value = _state.value.copy(saving = true)
-        viewModelScope.launch(AppDispatchers.io) {
-            val s = _state.value
-            val result = ImageExporter.saveAsCopy(
-                getApplication(), imagePath, s.transform, s.layers, s.cutOps,
-                baseName, format, quality, adjust = s.adjust, scale = scale
-            )
-            _state.value = _state.value.copy(saving = false)
-            if (result.ok) _events.tryEmit(EditorEvent.Saved(result.path ?: ""))
-            else _events.tryEmit(EditorEvent.Failed(R.string.ie_save_failed))
-        }
+        exportCtl.saveCopy(baseName, format, quality, scale)
     }
 
     fun replaceOriginal(quality: Int) {
-        if (_state.value.saving) return
-        _state.value = _state.value.copy(saving = true)
-        viewModelScope.launch(AppDispatchers.io) {
-            val s = _state.value
-            val result = ImageExporter.replaceOriginal(
-                getApplication(), imagePath, s.transform, s.layers, s.cutOps, quality, adjust = s.adjust
-            )
-            _state.value = _state.value.copy(saving = false)
-            if (result.ok) _events.tryEmit(EditorEvent.Saved(result.path ?: ""))
-            else _events.tryEmit(EditorEvent.Failed(R.string.ie_replace_failed))
-        }
+        exportCtl.replaceOriginal(quality)
     }
-}
-
-/**
- * عقد التفاعل بين قماش المحرّر وجلسة التحرير. كل الإحداثيات بوحدات المستند
- * (بكسل الصورة الأصلية) — القماش يحوّل إحداثيات الشاشة قبل النداء.
- */
-interface EditorCanvasController {
-    /** لمسة قصيرة: تحديد/إلغاء تحديد طبقة. */
-    fun onCanvasTap(docX: Float, docY: Float)
-
-    /** سحب الطبقة المحددة (مستمر؛ يُسجَّل في التاريخ مرة عند بداية الإيماءة). */
-    fun onLayerMove(deltaDocX: Float, deltaDocY: Float)
-
-    /** مقابض التحجيم/التدوير: الهندسة الجديدة كاملة. */
-    fun onLayerGeo(centerX: Float, centerY: Float, scale: Float, rotation: Float)
-
-    /** نقطة ضربة فرشاة (start = بداية ضربة جديدة). */
-    fun onStrokePoint(docX: Float, docY: Float, start: Boolean)
-
-    fun onStrokeFinish()
-
-    /** نقطة ممحاة الضربات (start = بداية إيماءة الممحاة). */
-    fun onEraseStrokeAt(docX: Float, docY: Float, start: Boolean)
-
-    /** سحب إنشاء شكل (start = بداية السحب). */
-    fun onShapeDrag(docX: Float, docY: Float, start: Boolean)
-
-    fun onShapeDragFinish()
-
-    /** بداية إيماءة تحرير (نقل/تحجيم/تدوير/قص): تُسجَّل في التاريخ مرة واحدة. */
-    fun beginGesture()
-
-    /** نهاية إيماءة التحرير: يُغلق إدخال التاريخ المفتوح في [beginGesture]. */
-    fun endGesture()
-
-    /** نقطة حدّ حر للقص (start = بداية رسم جديد). */
-    fun onCutPathPoint(docX: Float, docY: Float, start: Boolean)
-
-    /** حدود شكل قصّ (مربع/دائرة...) أثناء السحب. */
-    fun onCutShapePoints(points: List<Pair<Float, Float>>)
-
-    /** نهاية رسم الحدّ: تُثبَّت عملية القص. */
-    fun onCutPathFinish()
-
-    /** نقطة فرشاة قصّ: ممحاة/استعادة/موزاييك (start = بداية ضربة). */
-    fun onCutBrushPoint(docX: Float, docY: Float, start: Boolean)
-
-    /** نهاية ضربة فرشاة القصّ. */
-    fun onCutBrushFinish()
-
-    /** لمسة العصا السحرية (قص الخلفية). */
-    fun onCutTap(docX: Float, docY: Float)
-
-    /** إلغاء أي عنصر حي قيد الإنشاء (تبديل أداة مثلاً). */
-    fun cancelLive()
 }

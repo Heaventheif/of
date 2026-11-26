@@ -13,17 +13,7 @@ import org.openfilemanager.app.ui.components.AudioArt
 import org.openfilemanager.app.ui.components.AudioArtFactory
 import org.openfilemanager.app.ui.components.AudioArtKeyer
 
-/**
- * فئة التطبيق: تُثبَّت قبل أي نشاط —
- * - [AppLog.install]: سجل أخطاء محلي معمى المسارات + معالج الانهيارات.
- * - محمّل صور Coil مفرد للعملية (F-16): كان يُبنى في onCreate لكل نشاط
- *   فتعاد بناء الكاشات عند التدوير/تغيير اللغة/الاستعادة ويبقى القديم بلا
- *   إغلاق واضح — الإعداد العالمي مرة واحدة في Application onCreate.
- * - StrictMode في بناء debug فقط: كشف تسريبات الكائنات القابلة للإغلاق
- *   والتسجيلات والأنشطة وانكشاف file:// على الشبكة أو في النوايا، وقراءات
- *   القرص على الخيط الرئيسي. كل السياسات بـ penaltyLog لا penaltyDeath —
- *   الكشف كامل لكن الفحص لا يقتل التطبيق أبداً.
- */
+/** فئة التطبيق: تُثبَّت قبل أي نشاط — - [AppLog.install]: سجل أخطاء محلي معمى المسارات + معالج الانهيارات. */
 class App : Application() {
 
     /** Manual DI container: created early so activities and services can grab it via [appContainer]. */
@@ -31,7 +21,7 @@ class App : Application() {
         private set
 
     override fun attachBaseContext(base: android.content.Context) {
-        super.attachBaseContext(LanguageManager.wrap(base))
+        super.attachBaseContext(base.applyLanguage())
     }
 
     override fun onCreate() {
@@ -47,7 +37,7 @@ class App : Application() {
     }
 
     /**
-     * (تحسين) ضغط الذاكرة: حين يطلب النظام تقليص الاستهلاك (تطبيق آخر في المقدمة،
+     * ضغط الذاكرة: حين يطلب النظام تقليص الاستهلاك (تطبيق آخر في المقدمة،
      * ذاكرة منخفضة) يُفرَّغ كاش صور Coil في الذاكرة وأقسام المحرّك الأثقل. الكاش على
      * القرص يبقى فتعود الصور المصغّرة سريعاً دون إعادة فك ضغط كل شيء.
      */
@@ -58,7 +48,7 @@ class App : Application() {
         org.openfilemanager.app.imageedit.engine.CutEngine.trimMemory()
     }
 
-    /** (F-16) محمّل الصور مرة واحدة لكل عملية بسياق التطبيق لا النشاط. */
+    /** محمّل الصور مرة واحدة لكل عملية بسياق التطبيق لا النشاط. */
     private fun installImageLoader() {
         Coil.setImageLoader(
             ImageLoader.Builder(this).components {

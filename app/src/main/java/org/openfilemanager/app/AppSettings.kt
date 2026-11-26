@@ -30,22 +30,10 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.openfilemanager.core.ConflictPolicy
 import org.openfilemanager.core.FolderSort
-import org.openfilemanager.core.KvStore
-import org.openfilemanager.core.NewFilesStore
-import org.openfilemanager.core.PerFolderSortStore
 import org.openfilemanager.core.SortDirectionCore
 import org.openfilemanager.core.SortFieldCore
 
-/**
- * DataStore للإعدادات: بديل SharedPreferences الآمن من الخيوط.
- * مثال واحد لكل عملية؛ الكتابة تُحدّث لقطة في الذاكرة فوراً وتُنظِّم في القرص
- * (DataStore) من نطاق داخلي يُلغى مع العملية — بلا حظر متزامن للإقلاع.
- * الظهور داخلي لا خاص: يتيح اختبار الترحيل مباشرة من اختبارات الوحدة.
- *
- * (تخريب) مستند DataStore تالف يُستبدل بمعالج صريح (قيم افتراضية) لا انهيار
- * عند كل إقلاع: كل القيم تفضيلات قابلة لإعادة الاشتقاق، لا ملفات مستخدم —
- * البديل الموثق: الافتراضيات + سجل خطأ.
- */
+/** DataStore للإعدادات: بديل SharedPreferences الآمن من الخيوط. */
 internal val Context.settingsDataStore: DataStore<Preferences> by preferencesDataStore(
     name = "open_file_manager",
     corruptionHandler = ReplaceFileCorruptionHandler(
@@ -63,43 +51,25 @@ class AppSettings private constructor(context: Context) {
     private val scope = CoroutineScope(SupervisorJob() + AppDispatchers.io)
     private val loadLock = Mutex()
 
-    /**
- * كل تعديل قرص يمر عبر هذه القناة: يُصف داخل كتلة synchronized نفسها التي
- * تعدّل اللقطة، ويستهلكه كوروتين واحد — فيطابق ترتيبُ القرص ترتيبَ اللقطة
- * تماماً، ولا يمكن لكتابة سابقة أن تعود وتهبط بعد إعادة الضبط.
- */
-    /**
-     * كل تعديل قرص يمر عبر هذه القناة. (F23) قيمة SetValue ليست Any سائبة بل
-     * مغلفة بنوعها المادي — الأنواع الخمسة التي تدعمها Preferences فعلاً — فلا
-     * يمر عبر القناة كائن عابر غير متوقع.
-     */
-    private sealed interface DiskEdit {
-        /** قيمة مغلَفة بنوعها المادي (F23). */
-        sealed interface SupportedValue {
-            data class Bool(val v: Boolean) : SupportedValue
-            data class Str(val v: String) : SupportedValue
-            data class Num(val v: Int) : SupportedValue
-            data class LongNum(val v: Long) : SupportedValue
-            data class FloatNum(val v: Float) : SupportedValue
-        }
-
-        data class SetValue(val key: Preferences.Key<*>, val value: SupportedValue) : DiskEdit
-        data class Remove(val key: Preferences.Key<*>) : DiskEdit
-        data object ClearAll : DiskEdit
-        /** حاجز: يكتمل بعد كتابة كل ما سبقه في القناة (انظر [flushBlocking]). */
-        data class Barrier(val done: CompletableDeferred<Unit>) : DiskEdit
-    }
-
     private val diskEdits = Channel<DiskEdit>(Channel.UNLIMITED)
 
-    /** تعديلات لم تكتب للقرص بعد (بالفشل أو بالانتظار) بترتيب وصولها. */
-    private val retryQueue = ArrayDeque<DiskEdit>()
+    private val queue = SettingsDiskEditQueue(
+        apply = ::applyDiskEdit,
+        retryMs = DISK_WRITE_RETRY_MS,
+        maxAttempts = DISK_WRITE_MAX_ATTEMPTS,
+        onGiveUp = { edit, attempts, t ->
+            AppLog.e(
+                "settings",
+                "تعذر حفظ تعديل الإعدادات على القرص بعد $attempts محاولات (${edit.javaClass.simpleName})",
+                t
+            )
+        }
+    )
 
     init {
         startDiskConsumer()
     }
 
-    /** كتابة القيمة المادية في Preferences حسب نوعها (F23)؛ الأنواع القياسية الخمسة حصراً. */
     @Suppress("UNCHECKED_CAST")
     private fun writeToPrefs(prefs: androidx.datastore.preferences.core.MutablePreferences, edit: DiskEdit) {
         if (edit !is DiskEdit.SetValue) return
@@ -128,68 +98,10 @@ class AppSettings private constructor(context: Context) {
     private fun startDiskConsumer() {
         scope.launch {
             for (edit in diskEdits) {
-                // (F-17/تحديث) التعديل الفاشل نهائياً (بعد كل المحاولات) كان
-                // يُسقط ويُستهلك ما بعده، فتكتب قيمة أحدث ناجحة مفتاحها هي فقط
-                // ويضيع المفتاح الفاشل عند الإقلاع التالي (كتابة لاحقة لا دوام
-                // ما قبلها — DataStore يطبّق التحويل على الحالة المرصودة لا على
-                // اللقطة). الآن: التعديل يبقى في طابور إعادة المحاولة ويُعاد قبل
-                // أي تعديل جديد (الترتيب على القرص يطابق ترتيب اللقطة)، وحاجز
-                // flushBlocking القادم يعيد المحاولة أيضاً؛ العلم [saveFailed]
-                // لا يُمسح إلا بفراغ الطابور كله.
-                retryQueue.addLast(edit)
-                drainRetryQueue()
-                if (retryQueue.isEmpty() && _saveFailed.value) _saveFailed.value = false
+                queue.submit(edit)
             }
         }
     }
-
-    /**
-     * يعالج طابور إعادة المحاولة بالترتيب: التعديل عند رأسه يُعاد [DISK_WRITE_MAX_ATTEMPTS]
-     * محاولة؛ إن استمر فشله تُكسر المعالجة ويبقى بلا إسقاط (تُعاد عند التعديل
-     * أو الحاجز التالي) مع سقف حجم للطابور.
-     */
-    private suspend fun drainRetryQueue() {
-        while (retryQueue.isNotEmpty()) {
-            val head = retryQueue.first()
-            var attempt = 0
-            var succeeded = false
-            while (true) {
-                val result = runCatching { applyDiskEdit(head) }
-                if (result.isSuccess) { succeeded = true; break }
-                attempt++
-                if (attempt >= DISK_WRITE_MAX_ATTEMPTS) {
-                    AppLog.e(
-                        "settings",
-                        "تعذر حفظ تعديل الإعدادات على القرص بعد $attempt محاولات (${head.javaClass.simpleName})",
-                        result.exceptionOrNull()
-                    )
-                    break
-                }
-                delay(DISK_WRITE_RETRY_MS)
-            }
-            if (succeeded) {
-                retryQueue.removeFirst()
-            } else {
-                _saveFailed.value = true
-                if (retryQueue.size > MAX_QUEUED_EDITS) {
-                    // سقف الذاكرة: الأقدم يُرمى أخيراً (مع سجل) — القيمة موجودة في
-                    // اللقطة للجلسة والعلم مرفوع فالخسارة مرئية لا صامتة.
-                    AppLog.e("settings", "طابور تعديلات الإعدادات المعلّقة يتجاوز الحد؛ يُرمى الأقدم")
-                    retryQueue.removeFirst()
-                }
-                break
-            }
-        }
-    }
-
-    /**
-     * (F-17) فشل حفظ الإعدادات على القرص مع تعديلات معلّقة لم تُصرّف: اللقطة
-     * في الذاكرة تُبقي القراءة صحيحة لهذه الجلسة، والعلم يتيح للواجهة الإشارة
-     * إلى أن آخر التعديلات قد لا تثبت عند إغلاق التطبيق. يُمسح فقط عند
-     * فراغ طابور إعادة المحاولة (كتابة ناجحة حقيقية لكل ما قبله).
-     */
-    private val _saveFailed = MutableStateFlow(false)
-    val saveFailed: StateFlow<Boolean> = _saveFailed.asStateFlow()
 
     /**
      * لقطة محمّلة للقراءات المتزامنة (خيط الرئيسي). العقد: تُستدعى [ensureLoaded]
@@ -237,12 +149,7 @@ class AppSettings private constructor(context: Context) {
         return merged
     }
 
-    /**
-     * ينتظر (حتى [timeoutMs]) تفريغ كل التعديلات المعلقة إلى القرص. يُنادى من onStop حتى
-     * لا يضيع تعديل إعداد إن قُتلت العملية بعد ذلك مباشرة. أفضل جهد لا يحجب أكثر من المهلة.
-     * (F-17) يعيد true عند اكتمال التفريغ فعلاً — انتهاء المهلة ليس flush مؤكداً،
-     * ويُعلن بحالة [saveFailed] ولا يُدّعى نجاحاً صامتاً.
-     */
+    /** ينتظر (حتى [timeoutMs]) تفريغ كل التعديلات المعلقة إلى القرص. */
     fun flushBlocking(timeoutMs: Long = 400L): Boolean {
         val completed = runBlocking {
             withTimeoutOrNull(timeoutMs) {
@@ -251,9 +158,7 @@ class AppSettings private constructor(context: Context) {
                 done.await()
             }
         }
-        val ok = completed != null
-        if (!ok) _saveFailed.value = true
-        return ok
+        return completed != null
     }
 
     /** تحميل غير معطِّل للإقلاع: يُنادى مرة من App.onCreate. فشل التحميل يُعلن
@@ -264,7 +169,7 @@ class AppSettings private constructor(context: Context) {
             runCatching { ensureLoaded() }
                 .onFailure { t ->
                     AppLog.e("settings", "تعذر تحميل الإعدادات من القرص؛ تعمل الجلسة على الافتراضيات", t)
-                    _saveFailed.value = true
+                    queue.markBroken()
                 }
         }
     }
@@ -364,10 +269,6 @@ class AppSettings private constructor(context: Context) {
         return runCatching { ConflictPolicy.valueOf(raw ?: "") }.getOrDefault(ConflictPolicy.ASK)
     }
 
-    fun setConflictPolicy(policy: ConflictPolicy) {
-        putStringValue(CONFLICT_POLICY, policy.name)
-    }
-
     // ---------- التاريخ والإشعارات والعودة للمصدر والتكرار ----------
 
     /** تكرار الموسيقى الافتراضي عند بدء التشغيل. */
@@ -375,43 +276,6 @@ class AppSettings private constructor(context: Context) {
         get() = runCatching { RepeatMode.valueOf(loaded()[DEFAULT_REPEAT] ?: "") }
             .getOrDefault(RepeatMode.OFF)
         set(value) = putStringValue(DEFAULT_REPEAT, value.name)
-
-    // ---------- المخازن الصرفة من :core فوق جسر KvStore ----------
-
-    /**
-     * جسر KvStore ← DataStore: القراءة من اللقطة، والكتابة تحدّثها فوراً وتستمر
-     * في القرص من النطاق الداخلي. مفاتيح المخازن مسبوقة (srt./new.) فلا تتصادم
-     * مع مفاتيح الإعدادات القياسية.
-     */
-    private val kv = object : KvStore {
-        override fun getString(key: String): String? = loaded()[stringPreferencesKey(key)]
-
-        override fun putString(key: String, value: String) {
-            val k = stringPreferencesKey(key)
-            mutateSnapshotAndPersist { prefs ->
-                prefs[k] = value
-                DiskEdit.SetValue(k, DiskEdit.SupportedValue.Str(value))
-            }
-        }
-
-        override fun remove(key: String) {
-            val k = stringPreferencesKey(key)
-            mutateSnapshotAndPersist { prefs ->
-                prefs.remove(k)
-                DiskEdit.Remove(k)
-            }
-        }
-
-        override fun keys(): Set<String> =
-            loaded().asMap().keys.map { it.name }
-                .filter { it.startsWith("srt.") || it.startsWith("new.") }.toSet()
-    }
-
-    /** فرز لكل مجلد بهاش المسار، سقف 200. */
-    val perFolderSort = PerFolderSortStore(kv)
-
-    /** علامات «الملفات الجديدة»، سقف 500 معرّف. */
-    val newFiles = NewFilesStore(kv)
 
     /** الفرز الافتراضي للمجلدات التي لم يُخصص لها فرز (قيمة مجهولة ← الافتراض). */
     var defaultSort: FolderSort
@@ -426,6 +290,23 @@ class AppSettings private constructor(context: Context) {
             loadedFromDisk = true
             diskEdits.trySend(DiskEdit.ClearAll)
         }
+    }
+
+    val saveFailed: StateFlow<Boolean> get() = queue.saveFailed
+
+    /**
+     * (E2) إعادة المحاولة: إن فشل التحميل أعيد أولاً (فالطابور فارغ لا يُصلحه
+     * التفريغ)، ثم يُفرّج المعلق. علم التحميل لا يُمسح إلا بنجاح إعادة التحميل.
+     */
+    suspend fun retryPendingWrites() {
+        if (queue.loadFailed.value) {
+            runCatching { ensureLoaded() }
+                .onSuccess { queue.clearLoadFailed() }
+                .onFailure { t ->
+                    AppLog.e("settings", "تعذر إعادة تحميل الإعدادات من القرص", t)
+                }
+        }
+        queue.retryPending()
     }
 
     companion object {
@@ -443,11 +324,8 @@ class AppSettings private constructor(context: Context) {
         /** مهلة إعادة محاولة كتابة القرص الفاشلة. */
         private const val DISK_WRITE_RETRY_MS = 250L
 
-        /** (F-17) عدد محاولات كتابة القرص قبل إعلان الفشل بحالة قابلة للملاحظة. */
+        /** عدد محاولات كتابة القرص قبل إعلان الفشل بحالة قابلة للملاحظة. */
         private const val DISK_WRITE_MAX_ATTEMPTS = 3
-
-        /** سقف التعديلات المعلّقة في طابور إعادة المحاولة (ذاكرة الطابور محدودة). */
-        private const val MAX_QUEUED_EDITS = 256
 
         @Volatile
         private var instance: AppSettings? = null
@@ -458,5 +336,159 @@ class AppSettings private constructor(context: Context) {
                 instance ?: AppSettings(context.applicationContext)
                     .also { instance = it }
             }
+    }
+}
+
+internal sealed interface DiskEdit {
+    sealed interface SupportedValue {
+        data class Bool(val v: Boolean) : SupportedValue
+        data class Str(val v: String) : SupportedValue
+        data class Num(val v: Int) : SupportedValue
+        data class LongNum(val v: Long) : SupportedValue
+        data class FloatNum(val v: Float) : SupportedValue
+    }
+
+    data class SetValue(val key: Preferences.Key<*>, val value: SupportedValue) : DiskEdit
+    data class Remove(val key: Preferences.Key<*>) : DiskEdit
+    data object ClearAll : DiskEdit
+    /** حاجز: يكتمل بعد كتابة كل ما سبقه في القناة (انظر flushBlocking). */
+    data class Barrier(val done: CompletableDeferred<Unit>) : DiskEdit
+}
+
+internal class SettingsDiskEditQueue(
+    private val apply: suspend (DiskEdit) -> Unit,
+    private val retryMs: Long,
+    private val maxAttempts: Int,
+    private val onGiveUp: (DiskEdit, Int, Throwable) -> Unit
+) {
+    private val pending = ArrayList<DiskEdit>()
+
+    /** (E2) فشل الكتابة: يرفعه فشل drain النهائي (onGiveUp) حصراً. انتهاء مهلة
+     *  flushBlocking ليس فشل كتابة فلا يرفعه. */
+    private val writeFailed = MutableStateFlow(false)
+
+    /** (E2) فشل التحميل (preload فشل): مستقل عن الكتابة؛ لا يمسحه إلا
+     *  إعادة تحميل ناجحة (clearLoadFailed من retryPendingWrites). */
+    private val _loadFailed = MutableStateFlow(false)
+
+    private val _saveFailed = MutableStateFlow(false)
+
+    private val drainLock = Mutex()
+
+    /** فشل حفظ ظاهر للواجهة: فشل كتابة أو فشل تحميل (أيهما). */
+    val saveFailed: StateFlow<Boolean> get() = _saveFailed.asStateFlow()
+
+    /** فشل تحميل القرص: يحدد هل retryPendingWrites يعيد التحميل قبل التفريغ. */
+    val loadFailed: StateFlow<Boolean> get() = _loadFailed.asStateFlow()
+
+    /** لقطة الطابور للتشخيص والاختبار (نسخة، لا تعرض الداخل). */
+    fun pendingSnapshot(): List<DiskEdit> = synchronized(this) { pending.toList() }
+
+    private fun refreshIndicator() {
+        _saveFailed.value = writeFailed.value || _loadFailed.value
+    }
+
+    /** فشل خارجي (تحميل قرص فاشل مثلاً) يرفع علم التحميل بلا تعديلات طابور. */
+    fun markBroken() {
+        _loadFailed.value = true
+        refreshIndicator()
+    }
+
+    /** (E2) إعادة تحميل ناجحة: مسح علم التحميل وحده؛ علم الكتابة لا يُمس هنا. */
+    fun clearLoadFailed() {
+        _loadFailed.value = false
+        refreshIndicator()
+    }
+
+    /** يستقبل تعديلاً (من كوروتين المستهلك وحده) ثم يصرف الطابور بالترتيب. */
+    suspend fun submit(edit: DiskEdit) {
+        synchronized(this) { coalesce(edit) }
+        drainLock.withLock { drain() }
+        synchronized(this) {
+            if (pending.isEmpty()) writeFailed.value = false
+            refreshIndicator()
+        }
+    }
+
+    suspend fun retryPending() {
+        var hadPending = false
+        drainLock.withLock {
+            synchronized(this) { hadPending = pending.isNotEmpty() }
+            if (hadPending) drain()
+        }
+        if (hadPending) {
+            synchronized(this) {
+                if (pending.isEmpty()) writeFailed.value = false
+                refreshIndicator()
+            }
+        }
+    }
+
+    /** قواعد الدمج: ClearAll يفوق الكل؛ المفتاح المكرر يستبدل في موضعه ضمن مقطعه. */
+    private fun coalesce(edit: DiskEdit) {
+        when (edit) {
+            DiskEdit.ClearAll -> {
+                pending.clear()
+                pending.add(edit)
+            }
+            is DiskEdit.Barrier -> pending.add(edit)
+            is DiskEdit.SetValue, is DiskEdit.Remove -> {
+                // نطاق الدمج: منذ آخر حاجز (ClearAll/Barrier) فقط.
+                var i = pending.size - 1
+                while (i >= 0) {
+                    val p = pending[i]
+                    if (p is DiskEdit.Barrier || p == DiskEdit.ClearAll) break
+                    if (sameKey(p, edit)) {
+                        pending[i] = edit
+                        return
+                    }
+                    i--
+                }
+                pending.add(edit)
+            }
+        }
+    }
+
+    private fun sameKey(a: DiskEdit, b: DiskEdit): Boolean {
+        val ka = when (a) {
+            is DiskEdit.SetValue -> a.key
+            is DiskEdit.Remove -> a.key
+            else -> return false
+        }
+        val kb = when (b) {
+            is DiskEdit.SetValue -> b.key
+            is DiskEdit.Remove -> b.key
+            else -> return false
+        }
+        return ka == kb
+    }
+
+    /** يعالج الطابور من الرأس؛ فشل نهائي عند الرأس يوقف المعالجة بلا إسقاط. */
+    private suspend fun drain() {
+        while (true) {
+            val head = synchronized(this) { pending.firstOrNull() } ?: return
+            var attempt = 0
+            var succeeded = false
+            var lastError: Throwable? = null
+            while (true) {
+                val result = runCatching { apply(head) }
+                if (result.isSuccess) { succeeded = true; break }
+                lastError = result.exceptionOrNull()
+                attempt++
+                if (attempt >= maxAttempts) break
+                delay(retryMs)
+            }
+            if (succeeded) {
+                synchronized(this) {
+                    val idx = pending.indexOf(head)
+                    if (idx >= 0) pending.removeAt(idx)
+                }
+            } else {
+                writeFailed.value = true
+                refreshIndicator()
+                onGiveUp(head, attempt, lastError ?: IllegalStateException("disk write failed"))
+                break
+            }
+        }
     }
 }

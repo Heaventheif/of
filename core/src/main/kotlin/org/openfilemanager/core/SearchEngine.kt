@@ -28,13 +28,7 @@ data class SearchReport(
     val errors: Int
 )
 
-/**
- * بحث تدفقي قابل للإلغاء: «مسح بالتدفق (walkFileTree) قابل للإلغاء،
- * دون فهرسة دائمة» — لا يُبنى أي فهرس، والمسح يتوقف فوراً عند [isCancelled] أو عند
- * بلوغ [maxResults]، والروابط الرمزية للمجلدات لا تُتبع (كقاعدة الأرشيف).
- *
- * المنطق صرف فيُختبر على JVM بنظام ملفات وهمي.
- */
+/** بحث تدفقي قابل للإلغاء: «مسح بالتدفق (walkFileTree) قابل للإلغاء، دون فهرسة دائمة» — لا يُبنى أي فهرس، والمسح يتوقف فوراً عند [isCancelled] أو عند. */
 class SearchEngine(private val maxResults: Int = DEFAULT_MAX_RESULTS) {
 
     init {

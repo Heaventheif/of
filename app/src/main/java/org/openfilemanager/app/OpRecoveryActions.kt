@@ -6,20 +6,7 @@ import org.openfilemanager.core.OpRecovery
 import org.openfilemanager.core.OpRecord
 import org.openfilemanager.core.OpState
 
-/**
- * تنفيذ قرار المستخدم على عملية منقطعة (F-01): استئناف أو إلغاء وتنظيف.
- * الكائن بلا سياق أندرويد ولا كوروتينات: يُستدعى من حوار الاسترداد على مسار
- * IO، والاستئناف نفسه يمر عبر [FileOperationService.enqueue] كما أي طلب.
- *
- * (تحقق قبل القرار) القرار يُنفَّذ على حالة السجل اللحظية لا على نسخة الحوار:
- * سجل انتهى فعلاً (FINISHED/CANCELLED/FAILED) لا يُستأنف ولا يُلغى مرة
- * ثانية (المسار الزائف: نافذة السباق بين enqueue وخاتمة الخدمة) — يُعاد
- * خطأ واضح بدل إعادة تنفيذ ما تم. [resolveForJournal] صرفة (بلا AppContainer)
- * فتُختبر على JVM.
- *
- * الضغط والاستخراج لا يصلان هنا أصلاً: [OpRecovery.recoverableOps] يستبعدهما،
- * و[OpsCenter.refreshRecoverable] يُسقطهما وينظف مؤقتاتهما صامتاً.
- */
+/** تنفيذ قرار المستخدم على عملية منقطعة : استئناف أو إلغاء وتنظيف. */
 object OpRecoveryActions {
 
     /** حد عمر المؤقتات عند الاستئناف/الإلغاء: مؤقت أحدث قد يخص كتابة حية أخرى في المجلد نفسه. */
@@ -59,10 +46,7 @@ object OpRecoveryActions {
         val live = journal.op(op.id) ?: return "no journal record for ${op.id}"
         return when {
             op.kind == OpKind.RENAME ->
-                // التسمية لها مسار استرداد خاص (JournalRenameAdapter): إكمال
-                // الاسم النهائي أو إرجاع الأسماء الأصلية — لا استئناف من سجل
-                // عناصر النسخ ولا حذف مؤقتات عام هنا؛ recoverRename يدوّن
-                // الخاتمة في السجل بنفسه.
+                // التسمية لها مسار استرداد خاص (JournalRenameAdapter): إكمال الاسم النهائي أو إرجاع الأسماء الأصلية — لا استئناف من سجل عناصر النسخ ولا حذف مؤقتات عام…
                 OpRecovery.recoverRename(journal, op.id, complete = resume).errors.firstOrNull()
 
             resume -> {

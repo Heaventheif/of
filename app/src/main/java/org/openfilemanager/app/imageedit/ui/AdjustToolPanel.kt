@@ -30,7 +30,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import org.openfilemanager.app.R
 import org.openfilemanager.app.imageedit.ImageEditorViewModel
-import org.openfilemanager.app.imageedit.ImageEditorViewModel.EditorUiState
+import org.openfilemanager.app.imageedit.EditorUiState
 import org.openfilemanager.core.imageedit.Adjust
 import org.openfilemanager.core.imageedit.FilterPreset
 

@@ -5,32 +5,18 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import org.openfilemanager.core.FileOpJournal
 
-/**
- * Manual dependency container (instead of Hilt — the graph is small and
- * static): one instance per dependency for the whole process, created on
- * first request. Activities, services and ViewModels grab it via
- * [App.container] or the [appContainer] extension.
- *
- * Rule of thumb: anything that used to be a mutable global object
- * (OpsCenter previously) becomes an injected dependency here, and the flows
- * it exposes are read-only.
- */
+/** Manual dependency container. */
 class AppContainer(appContext: Context) {
 
     private val appContext: Context = appContext.applicationContext
 
     /**
-     * [0.7.9] نطاق مشترك لمفردات الحاوية التي تطلق كوروتينات تعيش مع العملية
+     * نطاق مشترك لمفردات الحاوية التي تطلق كوروتينات تعيش مع العملية
      * (جمع نتائج OpsCenter في ClipboardStore) — لا viewModelScope ولا نطاق
      * خدمة يموت مع صاحبه.
      */
     private val containerScope = CoroutineScope(SupervisorJob() + AppDispatchers.io)
 
-    /**
-     * [F7] نطاق مشترك معلَن للمتابعات التي يجب أن تكمل بعد مغادرة الشاشة
-     * (مثل حذف العناصر المنقولة من الأرشيف بعد اكتمال الاستخراج المرصود) —
-     * نفس نطاق الحاوية، معلن للخارج بدل استخدام viewModelScope القابل للقتل.
-     */
     val processScope: CoroutineScope get() = containerScope
 
     /** App settings (DataStore + synchronous snapshot): single instance, same as AppSettings.get. */
@@ -40,22 +26,17 @@ class AppContainer(appContext: Context) {
     val opsCenter: OpsCenter by lazy { OpsCenter(appContext) }
 
     /**
-     * [0.7.9] حافظة اللصق على مستوى العملية: كانت أعضاء في ViewModel
+     * حافظة اللصق على مستوى العملية: كانت أعضاء في ViewModel
      * فتُفقد عند قتل العملية. Singleton هنا ينجو، ويجمع نتائج النقل بنفسه.
      */
     val clipboard: ClipboardStore by lazy { ClipboardStore(opsCenter, containerScope) }
 
     /**
-     * [0.7.9] أرشيف مفرد لكل العملية: كان يُنشأ لكل استدعاء (خدمة ومعاينة
+     * أرشيف مفرد لكل العملية: كان يُنشأ لكل استدعاء (خدمة ومعاينة
      * ViewModel) — عديم الحالة الجوهرية فلا مبرر للإنشاء المتكرر.
      */
     val archiveService: ArchiveService by lazy { ArchiveService(appContext) }
 
-    /**
-     * [R3/§5] سجل «آخر فتح» للملفات: مفرد على مستوى العملية تُسجَّل فيه كل
-     * عملية فتح ملف فترتب الملفات الأخيرة في الرئيسية حسب آخر فتح فعلي
-     * (لا حسب إضافة MediaStore). يشارك نطاق الحاوية نفسه.
-     */
     val lastOpened: LastOpenedRegistry by lazy { LastOpenedRegistry(appContext, containerScope) }
 
     /** Folders pinned to the side menu. */
@@ -68,7 +49,7 @@ class AppContainer(appContext: Context) {
     val journal: FileOpJournal get() = opsCenter.journal
 
     /**
-     * (F-15) طبقة التخزين الموحدة: جذور الوحدات والمواقع الافتراضية وقراءة
+     * طبقة التخزين الموحدة: جذور الوحدات والمواقع الافتراضية وقراءة
      * المجلدات — كان مفرداً معمارياً بلا مستهلك فعلي بينما المتصفح والرئيسية
      * يتاجران File.listFiles مباشرة؛ الآن كلاهما يمر من هنا.
      */

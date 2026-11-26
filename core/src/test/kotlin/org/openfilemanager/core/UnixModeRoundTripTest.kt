@@ -11,7 +11,6 @@ import java.nio.file.attribute.PosixFilePermissions
 import org.apache.commons.compress.archivers.zip.ZipArchiveEntry
 import org.apache.commons.compress.archivers.zip.ZipArchiveOutputStream
 
-/** اختبار انحدار F20: أذونات Unix تُحفَظ عند تحرير الأرشيف وإعادة كتابته. */
 class UnixModeRoundTripTest {
     @get:Rule val tmp = TemporaryFolder()
     private fun dir(n: String): Path = tmp.newFolder(n).toPath()

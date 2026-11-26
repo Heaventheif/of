@@ -1,10 +1,9 @@
 package org.openfilemanager.core
+import org.openfilemanager.core.CoreOpCode
 
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNotNull
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Rule
@@ -81,7 +80,7 @@ class HardeningRegressionTest {
             runBlocking { engine.resume(opId, ConflictPolicy.SKIP) }
             fail("resume of a FINISHED operation must be refused")
         } catch (e: java.io.IOException) {
-            assertTrue("refusal must be explicit: ${e.message}", e.message!!.contains("منتهية"))
+            assertTrue("refusal must be explicit: ${e.message}", e.message!!.contains(CoreOpCode.OP_ALREADY_FINISHED))
         }
         // الرفض لم يضف سطر إنهاء ثانياً ولم يغير الحالة.
         assertEquals(OpState.FINISHED, journal.op(opId)!!.state)
@@ -118,7 +117,7 @@ class HardeningRegressionTest {
             runBlocking { engine.resume(opId, ConflictPolicy.SKIP) }
             fail()
         } catch (e: java.io.IOException) {
-            assertTrue(e.message!!.contains("منتهية"))
+            assertTrue(e.message!!.contains(CoreOpCode.OP_ALREADY_FINISHED))
         }
         assertEquals(OpState.FINISHED, journal.op(opId)!!.state)
     }

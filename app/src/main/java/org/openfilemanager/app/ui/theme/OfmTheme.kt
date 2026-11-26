@@ -134,7 +134,6 @@ object Dim {
     val GridCell = 108.dp
     val HomeCard = 72.dp
     val SheetItem = 56.dp
-    val NavBar = 80.dp
     val BarIcon = 24.dp
     val IconBox = 40.dp
 }

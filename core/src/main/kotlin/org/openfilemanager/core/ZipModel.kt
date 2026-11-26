@@ -16,11 +16,6 @@ sealed interface ZipSource {
     data object Directory : ZipSource
 }
 
-/**
- * One entry of the archive as it WILL be after saving. Folders end with '/'.
- * [unixMode] (F20) is the external-attributes mode of the entry for entries still
- * in the archive, or the POSIX permissions of an added file; -1 = not recorded.
- */
 data class ZipEntryInfo(
     val name: String,
     val size: Long,
@@ -45,13 +40,7 @@ class ZipLoad(val model: ZipModel?, val reason: String?) {
     val editable: Boolean get() = model != null
 }
 
-/**
- * An in-memory, editable picture of a ZIP. Edits (delete, rename, move, copy, new folder, add, replace)
- * only change this model; nothing touches the archive on disk until [ZipRewriter.write] saves it.
- * Pure logic (no I/O except reading a file's size when adding it), so it is unit-testable.
- *
- * Invariant: every parent folder of every entry exists as an explicit folder entry.
- */
+/** An in-memory, editable picture of a ZIP. */
 class ZipModel internal constructor(val archive: Path, entries: LinkedHashMap<String, ZipEntryInfo>, private val maxEntries: Int = DEFAULT_MAX_ENTRIES) {
     private var map: LinkedHashMap<String, ZipEntryInfo> = entries
 
@@ -62,7 +51,7 @@ class ZipModel internal constructor(val archive: Path, entries: LinkedHashMap<St
     companion object {
         const val DEFAULT_MAX_ENTRIES = 100_000
 
-        /** (F-11) أقصى عمق شجرة يُقبل عند إضافة مجلد من خارج الأرشيف إلى النموذج. */
+        /** أقصى عمق شجرة يُقبل عند إضافة مجلد من خارج الأرشيف إلى النموذج. */
         private const val MAX_TREE_DEPTH = 100
 
         /**
@@ -70,6 +59,13 @@ class ZipModel internal constructor(val archive: Path, entries: LinkedHashMap<St
          * be unsafe on rewrite: path tricks, duplicate or clashing names, or too many entries.
          */
         fun load(archive: Path, maxEntries: Int = DEFAULT_MAX_ENTRIES): ZipLoad {
+            when (ZipCentralDirectoryCheck.check(archive, maxEntries)) {
+                is ZipCentralDirectoryCheck.Verdict.OverLimit,
+                is ZipCentralDirectoryCheck.Verdict.CentralDirectoryTooLarge,
+                is ZipCentralDirectoryCheck.Verdict.Inconsistent ->
+                    return ZipLoad(null, "too-many-entries")
+                else -> {}
+            }
             // builder بدل المُنشئ المهجور ZipFile(File)؛ الافتراضي UTF-8 كما كان.
             org.apache.commons.compress.archivers.zip.ZipFile.builder().setPath(archive).get().use { zf ->
                 val map = LinkedHashMap<String, ZipEntryInfo>()
@@ -99,10 +95,7 @@ class ZipModel internal constructor(val archive: Path, entries: LinkedHashMap<St
                     }
                 }
                 map.putAll(missing)
-                // (F-05) التصادم يُفحص ثانيةً على الخريطة النهائية بعد بناء المجلدات
-                // الضمنية: ملف "a" مع مدخل "a/b.txt" بلا مجلد صريح "a/" كان ينشئ
-                // "a/" ضمنياً بعد الفحص الأول فيبقى النموذج محتفظاً بالملف والمجلد
-                // المتعارضين معاً — يُرفض التحرير بدل إصلاح صامت متناقض.
+                // التصادم يُفحص ثانيةً على الخريطة النهائية بعد بناء المجلدات الضمنية: ملف "a" مع مدخل "a/b.txt" بلا مجلد صريح "a/" كان ينشئ "a/" ضمنياً بعد الفحص…
                 if (map.keys.any { !it.endsWith("/") && map.containsKey("$it/") }) {
                     return ZipLoad(null, "file-folder-clash")
                 }
@@ -120,12 +113,6 @@ class ZipModel internal constructor(val archive: Path, entries: LinkedHashMap<St
             return parts.none { it.isEmpty() || it == "." || it == ".." }
         }
 
-        /**
-         * (F20) وضع أذونات Unix من الخصائص الخارجية للمدخل: تنسيق info-zip
-         * يضع «النظام 3.0 (Unix)» في الحقل العلوي والوضع في الحقلين الأوسطين.
-         * -1 إن لم تُسجَّل. تُستعاد عند إعادة الكتابة فلا تضيع الصلاحيات
-         * (rw-r--r--) عند تحرير الأرشيف على نظام يدعمها.
-         */
         internal fun unixModeOf(entry: org.apache.commons.compress.archivers.zip.ZipArchiveEntry): Int {
             val mode = (entry.externalAttributes ushr 16).toInt() and 0xFFF
             return if (mode == 0) -1 else mode
@@ -263,7 +250,7 @@ class ZipModel internal constructor(val archive: Path, entries: LinkedHashMap<St
     }
 
     /** Adds a file, or a whole folder tree, from outside into [folder]. Returns the top-level name added.
-     *  (F-11) الشجرة تُجمع كلها قبل أي تعديل على النموذج، بعدّة متكررة بمكدس صريح
+     *  الشجرة تُجمع كلها قبل أي تعديل على النموذج، بعدّة متكررة بمكدس صريح
      *  وبسقوف عمق وعدد — تجاوزه يرمي قبل أن يتغير النموذج بشيء. */
     @Synchronized
     fun add(folder: String, path: Path): String {
@@ -294,7 +281,7 @@ class ZipModel internal constructor(val archive: Path, entries: LinkedHashMap<St
 
     // ---------- helpers ----------
 
-    /** عنصر شجرة مجمّع قبل إضافته إلى النموذج (F-11): جمع كامل ثم إلزام، فلا نموذج ناقص عند الفشل. */
+    /** عنصر شجرة مجمّع قبل إضافته إلى النموذج : جمع كامل ثم إلزام، فلا نموذج ناقص عند الفشل. */
     private class CollectedEntry(
         val name: String,
         val isDirectory: Boolean,
@@ -304,12 +291,7 @@ class ZipModel internal constructor(val archive: Path, entries: LinkedHashMap<St
         val path: Path?
     )
 
-    /**
-     * يجمع شجرة المجلد المراد إضافتها (من عنصر الجذر [top] نفسه) بعدّة متكررة
-     * بمكدس صريح لا recursion — أشجار العمق الشديد لا تكسر مكدس النداءات —
-     * وبسقف عمق [MAX_TREE_DEPTH]. الروابط الرمزية تُتجاهل كما كان.
-     * سقف العدد الكلي يُفحص في [add] بعد الجمع (النموذج لا يتغير عند الفشل).
-     */
+    /** يجمع شجرة المجلد المراد إضافتها. */
     private fun collectTree(top: String, root: Path, limit: Int): List<CollectedEntry> {
         val out = ArrayList<CollectedEntry>()
         val stack = ArrayDeque<Pair<Path, Pair<String, Int>>>() // (المسار الفعلي، بادئة الاسم داخل الأرشيف + العمق)
@@ -348,14 +330,12 @@ class ZipModel internal constructor(val archive: Path, entries: LinkedHashMap<St
     private fun lastModifiedOf(p: Path): Long =
         runCatching { Files.getLastModifiedTime(p).toMillis() }.getOrDefault(0L)
 
-    /** صلاحيات POSIX للملف المضاف (بتات rwx)؛ -1 إن لم تتوفر (F20، نفس منطق fileInfo). */
     private fun posixModeOf(file: Path): Int = runCatching {
         val attrs = Files.readAttributes(file, java.nio.file.attribute.PosixFileAttributes::class.java)
         attrs.permissions().fold(0) { acc, p -> acc or p.toMask() }
     }.getOrDefault(-1)
 
     private fun fileInfo(name: String, file: Path): ZipEntryInfo {
-        // (F20) صلاحيات POSIX للملف المضاف تُسجَّل فتُكتب معه عند الحفظ.
         val mode = runCatching {
             val attrs = Files.readAttributes(file, java.nio.file.attribute.PosixFileAttributes::class.java)
             attrs.permissions().fold(0) { acc, p -> acc or p.toMask() }
@@ -385,14 +365,10 @@ class ZipModel internal constructor(val archive: Path, entries: LinkedHashMap<St
     }
 
     private fun uniqueName(folder: String, base: String, isDir: Boolean): String {
-        val dot = base.lastIndexOf('.')
-        val stem = if (dot > 0 && !isDir) base.substring(0, dot) else base
-        val ext = if (dot > 0 && !isDir) base.substring(dot) else ""
         val suffix = if (isDir) "/" else ""
-        var candidate = "$folder$base$suffix"
-        var n = 1
-        while (clashes(candidate)) { candidate = "$folder$stem ($n)$ext$suffix"; n++ }
-        return candidate
+        // توحيد منطق الاسم الفريد عبر NameRules.uniqueName — كان مكرراً.
+        val unique = NameRules.uniqueName(base, clashes = { c -> clashes("$folder$c$suffix") }, stripExtension = !isDir)
+        return "$folder$unique$suffix"
     }
 
     private fun remap(from: String, to: String) {

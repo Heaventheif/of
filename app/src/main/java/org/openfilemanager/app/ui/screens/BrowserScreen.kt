@@ -3,31 +3,22 @@ package org.openfilemanager.app.ui.screens
 import androidx.compose.material.icons.outlined.Menu
 import androidx.compose.material.icons.outlined.PushPin
 import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.background
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
-import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
 import androidx.compose.material.icons.outlined.Archive
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Add
@@ -40,7 +31,6 @@ import androidx.compose.material.icons.outlined.Save
 import androidx.compose.material.icons.outlined.DriveFileRenameOutline
 import androidx.compose.material.icons.outlined.FolderZip
 import androidx.compose.material.icons.outlined.OpenInNew
-import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.TextSnippet
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.AudioFile
@@ -50,62 +40,33 @@ import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.DriveFileMove
 import androidx.compose.material.icons.outlined.Edit
-import androidx.compose.material.icons.outlined.GridView
+import androidx.compose.material.icons.outlined.Info
+import org.openfilemanager.app.ui.components.FileDetailsDialog
 import androidx.compose.material.icons.outlined.MoreVert
-import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.SelectAll
 import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.outlined.Sort
-import androidx.compose.material.icons.outlined.ViewList
-import androidx.compose.material.icons.outlined.Visibility
-import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.AssistChip
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
-import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SnackbarHost
-import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
-// (تصحيح F13) اسم الحزمة الصحيح nestedscroll بحرف صغير: الحزمة nestedScroll لا وجود لها
 import androidx.compose.ui.input.nestedscroll.nestedScroll
-import androidx.compose.material3.Button
-import androidx.compose.runtime.produceState
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.ui.text.input.KeyboardType
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.withContext
-import org.openfilemanager.app.OpProgressInfo
 import org.openfilemanager.app.appContainer
-import org.openfilemanager.core.BatchRename
-import org.openfilemanager.core.BatchRenameSpec
-import org.openfilemanager.core.RenamePlan
-import org.openfilemanager.core.RenameRow
-import org.openfilemanager.core.RenameStatus
-import org.openfilemanager.app.ui.BulkRenameContext
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -114,10 +75,8 @@ import androidx.compose.runtime.setValue
 import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -127,9 +86,7 @@ import org.openfilemanager.app.R
 import org.openfilemanager.app.ui.BrowserViewModel
 import org.openfilemanager.app.ui.FileItem
 import org.openfilemanager.app.ui.Location
-import org.openfilemanager.app.ui.UiEvent
 import org.openfilemanager.app.ui.components.ActionSheet
-import org.openfilemanager.app.ui.components.BorderedIcon
 import org.openfilemanager.app.ui.components.EmptyState
 import org.openfilemanager.app.ui.components.FileGridCell
 import org.openfilemanager.app.ui.components.FileRow
@@ -139,14 +96,10 @@ import org.openfilemanager.app.ui.installApk
 import org.openfilemanager.app.ui.openWithSystem
 import org.openfilemanager.app.ui.LocalSnack
 import org.openfilemanager.app.BidiText
-import org.openfilemanager.app.ui.mimeOf
 import org.openfilemanager.app.ui.shareFiles
 import org.openfilemanager.app.ui.theme.Dim
 import org.openfilemanager.core.FileKind
 import org.openfilemanager.core.FileKinds
-import org.openfilemanager.core.SortFieldCore
-
-private data class Crumb(val label: String, val onClick: () -> Unit)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -168,6 +121,7 @@ fun BrowserScreen(
     var showSort by remember { mutableStateOf(false) }
     var showSelectionMore by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
+    var detailsPaths by remember { mutableStateOf<List<String>?>(null) }
     var renameItem by remember { mutableStateOf<FileItem?>(null) }
     var openAsItem by remember { mutableStateOf<FileItem?>(null) }
     var compressName by remember { mutableStateOf<String?>(null) }
@@ -177,7 +131,7 @@ fun BrowserScreen(
     var showCreate by remember { mutableStateOf(false) }
     var confirmDiscard by remember { mutableStateOf(false) }
 
-    // (تحسين) وضعا التمرير للقائمة والشبكة: كل موقع جديد يبدأ من الأعلى بدل أن يرث
+    // وضعا التمرير للقائمة والشبكة: كل موقع جديد يبدأ من الأعلى بدل أن يرث
     // موضع المجلد السابق، وزر العودة للأعلى يظهر بعد تمرير طويل فقط
     val listState = androidx.compose.foundation.lazy.rememberLazyListState()
     val gridState = androidx.compose.foundation.lazy.grid.rememberLazyGridState()
@@ -196,7 +150,7 @@ fun BrowserScreen(
 
     fun playFrom(item: FileItem) {
         val tracks = shown.filter { it.kind == FileKind.AUDIO }.mapNotNull { it.path }
-        // (F-03) مسارات خام للمشغل: FileProvider كان يحولها إلى content:// فتفشل
+        // مسارات خام للمشغل: FileProvider كان يحولها إلى content:// فتفشل
         // وسوم المقطع وملفات الكلمات الجانبية داخل الخدمة.
         MusicPlaybackService.start(ctx, tracks, tracks.indexOf(item.path).coerceAtLeast(0))
         onOpenPlayer()
@@ -376,8 +330,6 @@ fun BrowserScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = Dim.Gutter, vertical = 4.dp)
                 )
             }
-            // (المرحلة 4) النتائج الجزئية لا تُعرض كأنها كاملة: عدد ما تعذر الوصول
-            // إليه أثناء البحث يظهر للنتائج الصحيحة — دون حجبها ودون كشف مسارات.
             if (s.searchErrors > 0) {
                 Text(
                     stringResource(R.string.ui_search_errors, s.searchErrors), style = MaterialTheme.typography.bodyMedium,
@@ -390,10 +342,7 @@ fun BrowserScreen(
                     color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(horizontal = Dim.Gutter, vertical = 4.dp)
                 )
             }
-            // (تصحيح) أيقونة التحديث كانت تبقى ظاهرة بعد السحب: PullToRefreshBox لا يُرجع
-            // المؤشر إلا بعد أن تنتقل isRefreshing من true إلى false، والتحميل المحلي
-            // السريع ينتهي قبل أن تتحول إلى true أصلاً. الآن نحتفظ بحالة سحب خاصة
-            // ننهيها بعد حدّ أدنى للعرض وانتهاء التحميل الفعلي.
+            // أيقونة التحديث كانت تبقى ظاهرة بعد السحب: PullToRefreshBox لا يُرجع المؤشر إلا بعد أن تنتقل isRefreshing من true إلى false، والتحميل المحلي السريع…
             var pullRefreshing by remember { mutableStateOf(false) }
             val loadingNow by rememberUpdatedState(s.loading)
             LaunchedEffect(pullRefreshing) {
@@ -466,6 +415,7 @@ fun BrowserScreen(
         val acts = buildList {
             val itemPath = item.path
             if (!item.isArchiveEntry && itemPath != null) {
+                add(SheetAction(Icons.Outlined.Info, stringResource(R.string.ui_details)) { detailsPaths = listOf(itemPath.toString()) })
                 if (item.isDir) {
                     val isPinned = item.path in pinnedPaths
                     add(SheetAction(Icons.Outlined.PushPin, stringResource(if (isPinned) R.string.drawer_unpin else R.string.drawer_pin)) {
@@ -491,6 +441,7 @@ fun BrowserScreen(
         }
         ActionSheet(BidiText.wrap(item.name), acts) { sheetItem = null }
     }
+    detailsPaths?.let { FileDetailsDialog(it) { detailsPaths = null } }
     openAsItem?.let { item ->
         ActionSheet(
             stringResource(R.string.ui_open_as),
@@ -516,6 +467,11 @@ fun BrowserScreen(
         buildList {
             val chosen = shown.filter { it.id in s.selection }
             val single = chosen.singleOrNull()
+            // (جديد) التفاصيل: الاسم والمسار الكامل والحجم والتواريخ للعناصر المحددة.
+            val detailPaths = chosen.filter { !it.isArchiveEntry }.mapNotNull { it.path?.toString() }
+            if (detailPaths.isNotEmpty()) {
+                add(SheetAction(Icons.Outlined.Info, stringResource(R.string.ui_details)) { detailsPaths = detailPaths })
+            }
             if (archiveFile == null) {
                 // Normal browsing: Rename lives in the bottom bar, so Share takes its place here.
                 val sharePaths = chosen.filter { !it.isDir }.mapNotNull { it.path }
@@ -598,274 +554,5 @@ fun BrowserScreen(
             confirmButton = { TextButton({ vm.rename(item, name); renameItem = null; vm.clearSelection() }) { Text(stringResource(R.string.ui_ok)) } },
             dismissButton = { TextButton({ renameItem = null }) { Text(stringResource(R.string.ui_cancel)) } }
         )
-    }
-}
-
-private fun sortLabel(f: SortFieldCore): Int = when (f) {
-    SortFieldCore.NAME -> R.string.ui_sort_name
-    SortFieldCore.MODIFIED -> R.string.ui_sort_modified
-    SortFieldCore.SIZE -> R.string.ui_sort_size
-    SortFieldCore.TYPE -> R.string.ui_sort_type
-}
-
-private fun dirCrumbs(dir: File, root: File, rootLabel: String, open: (File) -> Unit): List<Crumb> {
-    val chain = ArrayList<File>()
-    var cur: File? = dir
-    while (cur != null && cur != root) { chain.add(0, cur); cur = cur.parentFile }
-    return listOf(Crumb(rootLabel) { open(root) }) + chain.map { f -> Crumb(f.name) { open(f) } }
-}
-
-private fun archiveCrumbs(
-    archive: File, inner: String, openArchive: (File) -> Unit, openInner: (String) -> Unit,
-    openDir: (File) -> Unit, root: File
-): List<Crumb> {
-    val parts = inner.split('/').filter { it.isNotEmpty() }
-    val base = Crumb(archive.name) { openArchive(archive) }
-    return listOf(base) + parts.mapIndexed { i, p -> Crumb(p) { openInner(parts.take(i + 1).joinToString("/") + "/") } }
-}
-
-@Composable
-private fun Breadcrumbs(crumbs: List<Crumb>) {
-    val state = rememberLazyListState()
-    LaunchedEffect(crumbs.size) { state.scrollToItem((crumbs.size - 1).coerceAtLeast(0)) }
-    LazyRow(state = state, contentPadding = PaddingValues(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-        itemsIndexed(crumbs) { i, c ->
-            val last = i == crumbs.lastIndex
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                if (i > 0) Icon(Icons.AutoMirrored.Outlined.KeyboardArrowRight, null, tint = MaterialTheme.colorScheme.outline, modifier = Modifier.size(18.dp))
-                Text(
-                    c.label, style = MaterialTheme.typography.labelLarge,
-                    color = if (last) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.primary,
-                    maxLines = 1,
-                    modifier = Modifier.heightIn(min = 36.dp).clickable(enabled = !last, onClick = c.onClick).padding(horizontal = 8.dp, vertical = 10.dp)
-                )
-            }
-        }
-    }
-}
-
-internal data class ActionBarItem(val icon: ImageVector, val label: String, val destructive: Boolean = false, val onClick: () -> Unit)
-
-@Composable
-internal fun ActionBar(items: List<ActionBarItem>) {
-    Surface(color = MaterialTheme.colorScheme.surfaceContainerHigh) {
-        Row(Modifier.navigationBarsPadding().fillMaxWidth().padding(vertical = 6.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
-            items.forEach { a ->
-                val tint = if (a.destructive) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
-                Column(
-                    Modifier.weight(1f).heightIn(min = 52.dp).clickable(onClick = a.onClick).padding(vertical = 5.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center
-                ) {
-                    BorderedIcon(a.icon, tint = tint)
-                    Text(a.label, style = MaterialTheme.typography.labelMedium, color = tint, maxLines = 1)
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun PasteBar(count: Int, move: Boolean, onPaste: () -> Unit, onCancel: () -> Unit) {
-    Surface(color = MaterialTheme.colorScheme.surfaceContainerHigh) {
-        Row(
-            Modifier.navigationBarsPadding().fillMaxWidth().padding(horizontal = Dim.Gutter, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            Text(
-                stringResource(if (move) R.string.ui_moving_n else R.string.ui_copying_n, count),
-                style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f)
-            )
-            TextButton(onCancel) { Text(stringResource(R.string.ui_cancel)) }
-            androidx.compose.material3.Button(onPaste) { Text(stringResource(R.string.ui_paste_here)) }
-        }
-    }
-}
-
-@Composable
-private fun SearchField(value: String, onChange: (String) -> Unit) {
-    val focus = remember { FocusRequester() }
-    LaunchedEffect(Unit) { focus.requestFocus() }
-    BasicTextField(
-        value = value, onValueChange = onChange, singleLine = true,
-        textStyle = LocalTextStyle.current.copy(color = MaterialTheme.colorScheme.onSurface),
-        cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-        modifier = Modifier.fillMaxWidth().focusRequester(focus),
-        decorationBox = { inner ->
-            Row(
-                Modifier.fillMaxWidth().heightIn(min = 44.dp)
-                    .background(MaterialTheme.colorScheme.surfaceContainerHigh, MaterialTheme.shapes.extraLarge)
-                    .padding(horizontal = 16.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Box(Modifier.weight(1f)) {
-                    if (value.isEmpty()) Text(
-                        stringResource(R.string.ui_search_here), style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    inner()
-                }
-            }
-        }
-    )
-}
-
-@Composable
-internal fun NameDialog(title: String, initial: String, onConfirm: (String) -> Unit, onDismiss: () -> Unit) {
-    var name by remember { mutableStateOf(initial) }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(title) },
-        text = { OutlinedTextField(name, { name = it }, singleLine = true, modifier = Modifier.fillMaxWidth()) },
-        confirmButton = { TextButton({ onConfirm(name) }) { Text(stringResource(R.string.ui_ok)) } },
-        dismissButton = { TextButton(onDismiss) { Text(stringResource(R.string.ui_cancel)) } }
-    )
-}
-
-@Composable
-private fun OpsProgressStrip(p: OpProgressInfo, onCancel: () -> Unit) {
-    Column(Modifier.fillMaxWidth().padding(start = Dim.Gutter, end = 4.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                if (p.itemCount > 0) stringResource(
-                    R.string.file_ops_progress_line, p.label, minOf(p.itemIndex + 1, p.itemCount), p.itemCount, BidiText.wrap(p.currentFile)
-                ) else "${p.label} — ${BidiText.wrap(p.currentFile)}",
-                style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f)
-            )
-            TextButton(onCancel) { Text(stringResource(R.string.file_ops_cancel)) }
-        }
-        if (p.bytesTotal > 0) LinearProgressIndicator(
-            progress = { (p.bytesDone.toFloat() / p.bytesTotal).coerceIn(0f, 1f) },
-            modifier = Modifier.fillMaxWidth().padding(end = 12.dp)
-        ) else LinearProgressIndicator(Modifier.fillMaxWidth().padding(end = 12.dp))
-    }
-}
-
-/**
- * Bulk rename: four fields (template, global extension, start, extra zeros) and a live preview.
- * The preview and the real rename both come from [BatchRename.plan] (same engine, same inputs).
- */
-@Composable
-internal fun BulkRenameDialog(vm: BrowserViewModel, onConfirm: (BatchRenameSpec) -> Unit, onDismiss: () -> Unit) {
-    var data by remember { mutableStateOf<BulkRenameContext?>(null) }
-    var loaded by remember { mutableStateOf(false) }
-    LaunchedEffect(Unit) {
-        data = vm.bulkRenameContext()
-        loaded = true
-        if (data == null) onDismiss()
-    }
-    var template by remember { mutableStateOf("%%") }
-    var ext by remember { mutableStateOf("") }
-    var startText by remember { mutableStateOf("1") }
-    var zerosText by remember { mutableStateOf("") }
-
-    val start = BatchRename.parseStart(startText)
-    val zeros = BatchRename.parseZeros(zerosText)
-    val spec = if (start != null && zeros != null) BatchRenameSpec(template, ext, start, zeros) else null
-    val context = data
-    // Recomputed off the main thread, debounced; a newer edit cancels the previous run.
-    val plan by produceState<RenamePlan?>(null, context, spec) {
-        if (context == null || spec == null) { value = null; return@produceState }
-        delay(120)
-        value = withContext(Dispatchers.Default) { BatchRename.plan(context.inputs, spec, context.existing, context.strictFat) }
-    }
-    val current = plan
-
-    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Surface(
-            shape = MaterialTheme.shapes.extraLarge,
-            color = MaterialTheme.colorScheme.surfaceContainerHigh,
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 24.dp).heightIn(max = 680.dp)
-        ) {
-            Column(Modifier.padding(top = 20.dp, start = 16.dp, end = 16.dp, bottom = 8.dp)) {
-                Text(stringResource(R.string.ui_bulk_rename), style = MaterialTheme.typography.titleLarge)
-                Spacer(Modifier.height(8.dp))
-                LazyColumn(Modifier.weight(1f, fill = false)) {
-                    item {
-                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            OutlinedTextField(
-                                template, { template = it }, singleLine = true, modifier = Modifier.fillMaxWidth(),
-                                label = { Text(stringResource(R.string.ui_bulk_template)) },
-                                supportingText = { Text(stringResource(R.string.ui_bulk_template_hint)) }
-                            )
-                            OutlinedTextField(
-                                ext, { ext = it }, singleLine = true, modifier = Modifier.fillMaxWidth(),
-                                label = { Text(stringResource(R.string.ui_bulk_ext)) },
-                                placeholder = { Text("png") },
-                                supportingText = { Text(stringResource(R.string.ui_bulk_ext_hint)) }
-                            )
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                OutlinedTextField(
-                                    startText, { startText = it.filter { c -> c in '0'..'9' }.take(18) }, singleLine = true,
-                                    modifier = Modifier.weight(1f), isError = start == null,
-                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                    label = { Text(stringResource(R.string.ui_bulk_start)) },
-                                    supportingText = { Text(stringResource(R.string.ui_bulk_start_hint)) }
-                                )
-                                OutlinedTextField(
-                                    zerosText, { zerosText = it.filter { c -> c in '0'..'9' }.take(2) }, singleLine = true,
-                                    modifier = Modifier.weight(1f), isError = zeros == null,
-                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                    label = { Text(stringResource(R.string.ui_bulk_zeros)) },
-                                    supportingText = { Text(stringResource(R.string.ui_bulk_zeros_hint)) }
-                                )
-                            }
-                            HorizontalDivider(Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.outlineVariant)
-                            when {
-                                !loaded || (spec != null && current == null) ->
-                                    CircularProgressIndicator(Modifier.size(24.dp).padding(2.dp))
-                                current != null -> Text(
-                                    stringResource(R.string.ui_bulk_summary, current.changedCount, current.unchangedCount, current.blockingCount),
-                                    style = MaterialTheme.typography.labelLarge,
-                                    color = if (current.blockingCount > 0) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
-                    }
-                    if (current != null) {
-                        val numbered = template.contains("##")
-                        items(current.rows.size, key = { current.rows[it].index }) { i ->
-                            BulkPreviewRow(current.rows[i], numbered)
-                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                        }
-                    }
-                }
-                Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.End) {
-                    TextButton(onDismiss) { Text(stringResource(R.string.ui_cancel)) }
-                    Button({ spec?.let(onConfirm) }, enabled = current?.canApply == true) { Text(stringResource(R.string.ui_bulk_apply)) }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun BulkPreviewRow(row: RenameRow, numbered: Boolean) {
-    val scheme = MaterialTheme.colorScheme
-    val color = when {
-        row.blocking -> scheme.error
-        row.status == RenameStatus.UNCHANGED -> scheme.onSurfaceVariant
-        else -> scheme.onSurface
-    }
-    val note = when (row.status) {
-        RenameStatus.UNCHANGED -> stringResource(R.string.ui_bulk_st_unchanged)
-        RenameStatus.DUPLICATE -> stringResource(R.string.ui_bulk_st_dup)
-        RenameStatus.CONFLICT -> stringResource(R.string.ui_bulk_st_conflict)
-        RenameStatus.INVALID -> stringResource(R.string.ui_bulk_st_invalid)
-        RenameStatus.OK -> listOfNotNull(
-            if (numbered) stringResource(R.string.ui_bulk_meta_number, row.number) else null,
-            row.extension.takeIf { it.isNotEmpty() }?.let { stringResource(R.string.ui_bulk_meta_ext, it) }
-        ).joinToString(" · ")
-    }
-    Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
-        Text(
-            BidiText.wrap(row.original), style = MaterialTheme.typography.labelMedium,
-            color = scheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis
-        )
-        Text(
-            BidiText.wrap(row.newName), style = MaterialTheme.typography.bodyMedium,
-            color = color, maxLines = 3, overflow = TextOverflow.Ellipsis
-        )
-        if (note.isNotEmpty()) Text(note, style = MaterialTheme.typography.labelSmall, color = if (row.blocking) scheme.error else scheme.outline)
     }
 }

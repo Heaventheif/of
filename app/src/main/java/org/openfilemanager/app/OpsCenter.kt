@@ -10,7 +10,6 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.openfilemanager.core.ConflictDecision
@@ -43,13 +42,7 @@ data class OpProgressInfo(
  */
 class PendingConflict(val request: ConflictRequest, val deferred: CompletableDeferred<ConflictDecision>)
 
-/**
- * Outcome of an operation that actually finished: a structured signal instead
- * of parsing translated strings. `kind` is null on resume when the original
- * record kind is unknown. The UI relies on it to clear the cut clipboard on
- * a successful move (not merely on enqueueing), and [opId] ties it to its own
- * operation so one result never lands on a newer clipboard.
- */
+/** Outcome of an operation that actually finished: a structured signal instead of parsing translated strings. */
 data class OpOutcome(
     val opId: String?,
     val kind: OpKind?,
@@ -58,19 +51,7 @@ data class OpOutcome(
     val skipped: Int
 )
 
-/**
- * Operations bridge between the service and the UI at the whole-operation
- * level, with no Activity or UI-context reference so nothing leaks. The UI
- * collects the flows only while STARTED (repeatOnLifecycle) so no conflict
- * dialog appears after leaving; the conflict times out to a safe skip.
- *
- * No longer the former global object: a single instance is created in
- * [AppContainer] and injected into the service, UI and ViewModel via manual
- * DI. The flows are read-only from outside (immutable StateFlow/SharedFlow) —
- * the service publishes through [publishProgress], [publishConflict],
- * [publishResult] and [publishOutcome], so no caller can write operation
- * state outside the documented path.
- */
+/** Operations bridge between the service and the UI at the whole-operation level, with no Activity or UI-context reference so nothing leaks. */
 class OpsCenter(context: Context) {
 
     private val appContext: Context = context.applicationContext
@@ -80,14 +61,13 @@ class OpsCenter(context: Context) {
         FileOpJournal(File(appContext.filesDir, "ops").toPath())
     }
 
-    /**
-     * سجل دائم لأوامر استبدال مجلد الوجهة عند استخراج الأرشيف (REPLACE):
-     * كل نسخة احتياطية تحتوي بيانات المستخدم تُسجّل هنا قبل نقل المجلد
-     * الأصلي إليها، فيستطيع استرداد الإقلاع ([ReplaceBackupRecovery]) حسم
-     * مصيرها — لا منظّف المؤقتات الذي كان يمحوها عند موت العملية (0.8.1).
-     */
+    /** سجل دائم لأوامر استبدال مجلد الوجهة عند استخراج الأرشيف. */
     val replaceBackups: ReplaceBackupStore by lazy {
         ReplaceBackupStore(File(appContext.filesDir, "ops").resolve("replace-backups").toPath())
+    }
+
+    val operationHistory: org.openfilemanager.app.history.OperationHistoryStore by lazy {
+        org.openfilemanager.app.history.OperationHistoryStore(appContext.filesDir)
     }
 
     /** The active operation right now, or null while idle. */
@@ -102,15 +82,7 @@ class OpsCenter(context: Context) {
     private val _outcomes = MutableSharedFlow<OpOutcome>(extraBufferCapacity = 16)
     val outcomes: SharedFlow<OpOutcome> = _outcomes.asSharedFlow()
 
-    /**
-     * (F-14) نتائج غير مقروءة: كانت خانة واحدة تُداس بنتيجة أحدث فتضيع قبل
-     * عرضها. الآن طابور محدود بحدّ [MAX_PENDING_RESULTS]: كل نتيجة تُعرض
-     * بالتسلسل ولا يُطوَى شيء؛ [OpJournal] يبقى المصدر الدائم للعمليات،
-     * ويعاد استرجاع ما فات أثناء موت العملية من [refreshRecoverable].
-     * [seq] مُعرّف فريد للنتيجة، و[acknowledgeResult] لا تُنادى إلا بعد
-     * عرض Snackbar فعلاً (من حلقة العرض في OfmApp) فلا تفقد نتيجة
-     * بإعادة إنشاء الواجهة.
-     */
+    /** نتائج غير مقروءة: كانت خانة واحدة تُداس بنتيجة أحدث فتضيع قبل عرضها. */
     data class PendingResult(val seq: Long, val opId: String?, val message: String, val outcome: OpOutcome?, val isError: Boolean = false)
 
     private val _pendingResults = MutableStateFlow<List<PendingResult>>(emptyList())
@@ -145,7 +117,7 @@ class OpsCenter(context: Context) {
         _conflict.value = pending
     }
 
-    /** Final result message (snackbar + re-read): بث فوري + طابور النتائج المعلّقة (F-14). */
+    /** Final result message (snackbar + re-read): بث فوري + طابور النتائج المعلّقة . */
     fun publishResult(message: String, opId: String? = null, isError: Boolean = false) {
         _results.tryEmit(message)
         synchronized(this) {
@@ -160,10 +132,15 @@ class OpsCenter(context: Context) {
         }
     }
 
-    /** Structured outcome for a finished operation: بث فوري + ربطه بنتيجته المعلّقة (F-14). */
+    /** Structured outcome for a finished operation: بث فوري + ربطه بنتيجته المعلّقة . */
     fun publishOutcome(outcome: OpOutcome) {
         _outcomes.tryEmit(outcome)
         outcome.opId?.let { publishedOpIds += it }
+        if (FeatureFlags.operationHistory) {
+            runCatching {
+                operationHistory.record(outcome.kind?.name, outcome.ok, outcome.failed, outcome.skipped)
+            }
+        }
         synchronized(this) {
             val cur = _pendingResults.value
             // اربطه بمدخلة معرّفها نفسه بلا ناتج، وإلا فأقدم مدخلة بلا ناتج:
@@ -186,13 +163,7 @@ class OpsCenter(context: Context) {
     var queueCancelRequested: Boolean = false
         private set
 
-    /**
-     * Operation ids the platform asked to stop at the dataSync timeout:
-     * cancellation is keyed by operation id, not a global flag, so a new UI
-     * request cannot wipe a stop aimed at a running operation, and the stop
-     * never crosses into the next queued operation. The id is removed when a
-     * new run/resume starts with it.
-     */
+    /** Operation ids the platform asked to stop at the dataSync timeout. */
     private val stopRequestedOps: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
     /** User cancellation: the running operation and everything queued behind it. */
@@ -228,14 +199,7 @@ class OpsCenter(context: Context) {
         stopRequestedOps.clear()
     }
 
-    /**
-     * Ids of operations currently executing in the live app process: recorded
-     * when the service starts each one and cleared when it finishes. A RUNNING
-     * journal record present here is not "interrupted" — the service is writing
-     * it right now; announcing it interrupted during activity recreation
-     * (rotation/language/task switch) showed the recovery dialog falsely and
-     * its cancel button deleted temps of a live operation.
-     */
+    /** Ids of operations currently executing in the live app process: recorded when the service starts each one and cleared when it finishes. */
     private val activeOpIds: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
     /**
@@ -248,11 +212,6 @@ class OpsCenter(context: Context) {
     /** تسجيل أن طلب استئنافاً رُسل للعملية (يمنع إرسال ثانٍ حتى تنتهي). */
     fun markResumeDispatched(opId: String) {
         resumeDispatchedOps += opId
-    }
-
-    /** استئناف فشل جدوله أو انتهت عملته: يسمح بالمحاولة مجدداً. */
-    fun clearResumeDispatched(opId: String) {
-        resumeDispatchedOps -= opId
     }
 
     /** Is a resume already dispatched for this op in the live process? */
@@ -270,15 +229,10 @@ class OpsCenter(context: Context) {
     /** Operations genuinely running in this live process (read-only copy). */
     fun activeOps(): Set<String> = activeOpIds.toSet()
 
-    /**
-     * Is any service work active right now? Used to hold off the whole
-     * interruption check: while the service runs an operation (progress != null)
-     * every RUNNING record belongs to it or to requests in its queue — none of
-     * them is "interrupted".
-     */
+    /** Is any service work active right now? Used to hold off the whole interruption check. */
     fun hasActiveServiceWork(): Boolean = activeOpIds.isNotEmpty() || progress.value != null
 
-    // ---------- استرداد العمليات المنقطعة (F-01) ----------
+    // ---------- استرداد العمليات المنقطعة ----------
 
     private val recoveryScope = CoroutineScope(SupervisorJob() + AppDispatchers.io)
 
@@ -290,13 +244,7 @@ class OpsCenter(context: Context) {
     private val _recoverable = MutableStateFlow<List<OpRecord>>(emptyList())
     val recoverable: StateFlow<List<OpRecord>> = _recoverable.asStateFlow()
 
-    /**
-     * فحص الانقطاع: يُستدعى عند بدء التطبيق وعند عودة الواجهة (ON_RESUME)
-     * وعند خاتمة كل عملية. أثناء عمل الخدمة يُفرَّغ الفحص (سجل RUNNING لعملية
-     * تُنفَّذ الآن ليس «منقطعاً»)، وغير القابل للاستئناف (ضغط/استخراج) يُسقط
-     * صامتاً مع تنظيف مؤقتاته عبر [OpRecovery.abandonUnresumable].
-     * استئناف سبق إرساله في هذه العملية (نافذة السباق) لا يُعرض ثانية.
-     */
+    /** فحص الانقطاع: يُستدعى عند بدء التطبيق وعند عودة الواجهة (ON_RESUME) وعند خاتمة كل عملية. */
     suspend fun refreshRecoverable() {
         replayMissedResults()
         if (hasActiveServiceWork()) {
@@ -312,10 +260,7 @@ class OpsCenter(context: Context) {
             return
         }
         val active = activeOps()
-        // تسوية أوامر الاستبدال المعلّقة أولاً: استعادة الأصل من النسخة
-        // الاحتياطية عند فشل/انقطاع الاستخراج، وحذفها فقط بعد ثبوت نجاح
-        // البديل المنشور. تُنفَّذ قبل abandonUnresumable حتى لو مُيّزت
-        // العملية لاحقاً CANCELLED — الحالتان غير المنجَزتين معاً.
+        // تسوية أوامر الاستبدال المعلّقة أولاً: استعادة الأصل من النسخة الاحتياطية عند فشل/انقطاع الاستخراج، وحذفها فقط بعد ثبوت نجاح البديل المنشور.
         runCatching {
             val outcome = withContext(AppDispatchers.io) {
                 ReplaceBackupRecovery.reconcile(replaceBackups, journal, active)
@@ -336,13 +281,7 @@ class OpsCenter(context: Context) {
             .filterNot { isResumeDispatched(it.id) }
     }
 
-    /**
-     * نشر نتائج العمليات المنتهية أثناء غياب عملية حية عنها (موت العملية بعد
-     * كتابة سطر الإنهاء، أو اكتمال العملية بعد إغلاق الواجهة) — مرة واحدة
-     * لكل عملية، بحدّ [MAX_MISSED_RESULTS] رسالة. العلامة ملف طابع زمني
-     * بجانب سجل العمليات (لا حالة حساسة جديدة تخزَّن)، وما نُشر في هذه
-     * العملية (publishedOpIds) لا يُعاد فلا تتكرر نتيجة بعد الاسترداد.
-     */
+    /** نشر نتائج العمليات المنتهية أثناء غياب عملية حية عنها. */
     private suspend fun replayMissedResults() {
         if (missedResultsReplayed) return
         missedResultsReplayed = true
@@ -369,8 +308,12 @@ class OpsCenter(context: Context) {
             }.getOrDefault(emptyList())
         }
         published.forEach { op ->
-            val message = op.message.takeIf { it.isNotBlank() }
+            // core الآن يُرجع رموزاً (CoreOpCode) لا نصوصاً عربية.
+            // نمرّرها عبر CoreMessageResolver لترجمتها قبل العرض؛ الرمز الأصلي
+            // يبقى في السجل، والنص المترجم فقط يُعرض للمستخدم.
+            val raw = op.message.takeIf { it.isNotBlank() }
                 ?: "${op.kind.name.lowercase()} finished: ok=${op.ok} failed=${op.failed} skipped=${op.skipped}"
+            val message = CoreMessageResolver.resolve(appContext, raw)
             publishResult(message, opId = op.id, isError = op.state == OpState.FAILED || op.failed > 0)
         }
     }

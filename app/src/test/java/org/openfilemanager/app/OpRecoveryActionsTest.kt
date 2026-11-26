@@ -14,14 +14,10 @@ import org.openfilemanager.core.OpItemKind
 import org.openfilemanager.core.OpItemRecord
 import org.openfilemanager.core.OpKind
 import org.openfilemanager.core.OpRecord
+import org.openfilemanager.core.OpRecovery
 import org.openfilemanager.core.OpState
 
-/**
- * اختبارات منطق قرار الاسترداد (OpRecoveryActions.resolveForJournal) على JVM:
- * التحقق من حالة السجل اللحظية قبل أي تنظيف أو جدولة — نافذة السباق بين
- * إرسال الاستئناف وخاتمة الخدمة كانت تنفذ العملية مرتين، والإلغاء المتأخر
- * كان يضيف سطر إنهاء زائفاً على سجل منتهٍ.
- */
+/** اختبارات منطق قرار الاسترداد. */
 class OpRecoveryActionsTest {
     @get:Rule val tmp = TemporaryFolder()
 
@@ -143,6 +139,69 @@ class OpRecoveryActionsTest {
         val req = RecordingRequest(true)
         val err = OpRecoveryActions.resolveForJournal(journal, journal.op(opId)!!, resume = true, resumeRequest = req.lambda)
         assertNull("empty rename recovery completes cleanly", err)
+        assertEquals(OpState.FINISHED, journal.op(opId)!!.state)
+    }
+
+    /** يبني قيد تسمية انقطعت بعد أول نقلة إلى المؤقت، بجسر JournalRenameAdapter نفسه. */
+    private fun startInterruptedRename(
+        journal: FileOpJournal,
+        dir: java.nio.file.Path,
+        steps: List<org.openfilemanager.core.RenameStep>
+    ): String {
+        val opId = "interrupted-rename"
+        val adapter = org.openfilemanager.core.JournalRenameAdapter(journal, opId, steps)
+        adapter.begin()
+        // نقلة الخطوة 0 إلى المؤقت ثم تسجيلها، ثم «موت»: بلا تراجع وبلا إنهاء.
+        java.nio.file.Files.move(steps[0].from, steps[0].temp)
+        adapter.record(org.openfilemanager.core.RenamePhase.TO_TEMP, steps[0])
+        return opId
+    }
+
+    @Test
+    fun interruptedBulkRenameIsPickedUpAndCompletesOnResume() {
+        val root = tmp.newFolder("rename-c").toPath()
+        java.nio.file.Files.write(root.resolve("a.txt"), "A".toByteArray())
+        java.nio.file.Files.write(root.resolve("b.txt"), "B".toByteArray())
+        val steps = org.openfilemanager.core.RenameEngine.plan(
+            root, listOf("a.txt" to "x.txt", "b.txt" to "y.txt")
+        )
+        val journal = journal()
+        val opId = startInterruptedRename(journal, root, steps)
+
+        // يظهر في العمليات الجديرة بالاسترداد عند الإقلاع.
+        assertTrue(OpRecovery.recoverableOps(journal.ops()).any { it.id == opId })
+
+        val req = RecordingRequest(true)
+        val err = OpRecoveryActions.resolveForJournal(journal, journal.op(opId)!!, resume = true, resumeRequest = req.lambda)
+        assertNull(err)
+        assertEquals("A", String(java.nio.file.Files.readAllBytes(root.resolve("x.txt"))))
+        assertEquals("B", String(java.nio.file.Files.readAllBytes(root.resolve("y.txt"))))
+        assertFalse("لا أسماء مؤقتة متبقية",
+            java.nio.file.Files.list(root).use { s -> s.map { it.fileName.toString() }.toList() }
+                .any { it.startsWith(".fm-ren-") })
+        assertEquals(OpState.FINISHED, journal.op(opId)!!.state)
+        // القرار عبر مسار RENAME الخاص: لا يُرسل للخدمة أصلاً (المحرك العام يرفض استئناف التسمية).
+        assertFalse(req.invoked)
+    }
+
+    @Test
+    fun interruptedBulkRenameRestoresOriginalsOnCancel() {
+        val root = tmp.newFolder("rename-r").toPath()
+        java.nio.file.Files.write(root.resolve("a.txt"), "A".toByteArray())
+        java.nio.file.Files.write(root.resolve("b.txt"), "B".toByteArray())
+        val steps = org.openfilemanager.core.RenameEngine.plan(
+            root, listOf("a.txt" to "x.txt", "b.txt" to "y.txt")
+        )
+        val journal = journal()
+        val opId = startInterruptedRename(journal, root, steps)
+
+        val err = OpRecoveryActions.resolveForJournal(journal, journal.op(opId)!!, resume = false, resumeRequest = RecordingRequest(true).lambda)
+        assertNull(err)
+        assertEquals("A", String(java.nio.file.Files.readAllBytes(root.resolve("a.txt"))))
+        assertEquals("B", String(java.nio.file.Files.readAllBytes(root.resolve("b.txt"))))
+        assertFalse("لا أسماء مؤقتة متبقية",
+            java.nio.file.Files.list(root).use { s -> s.map { it.fileName.toString() }.toList() }
+                .any { it.startsWith(".fm-ren-") })
         assertEquals(OpState.FINISHED, journal.op(opId)!!.state)
     }
 }

@@ -9,19 +9,6 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
 
-/**
- * [R3/§5] سجل «آخر فتح» للملفات: الخطة تطلب ترتيب الملفات الأخيرة في
- * الرئيسية حسب آخر فتح لا حسب إضافة MediaStore (لا توفرها MediaStore أصلاً).
- * التسجيل يجري عند كل فتح ملف فعلي (عارض الصور، المشغل، المحرر، المثبت،
- * خارجي) — المجلدات لا تدخل السجل (لها سجل المجلدات الأخيرة القائم).
- *
- * التخزين: SharedPreferences صغيرة مخصصة (مسار + طابع زمني JSON-آمن بفواصل
- * أسطر) بسقف [MAX_ENTRIES] مع طرد الأقدم. القراءة متزامنة (لقطة صغيرة)،
- * والكتابة تُدفع من نطاق IO الممرر من الحاوية فلا تمس الخيط الرئيسي.
- *
- * ملاحظة خصوصية: يُخزَّن المسار كما يُخزَّن في سجل المجلدات القائم (NAV_PREFS)
- * ولا يخرج من الجهاز إطلاقاً (لا صلاحية إنترنت في التطبيق).
- */
 class LastOpenedRegistry(
     appContext: Context,
     private val scope: CoroutineScope
@@ -29,13 +16,11 @@ class LastOpenedRegistry(
     private val prefs: SharedPreferences =
         appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
-
     // All snapshots are complete strings; conflation is safe because each write
     // supersedes the previous full snapshot. This bounds memory during rapid opens.
     private val writeQueue = Channel<String>(Channel.CONFLATED)
     @Volatile
     private var cachedEntries: List<Entry>? = null
-
 
     init {
         scope.launch {
@@ -110,7 +95,7 @@ class LastOpenedRegistry(
     }
 
     companion object {
-        /** سقف السجل (§5 تطلب 4-6 للعرض؛ السجل أوسع قليلاً ليبقى مفيداً). */
+        /** سقف السجل (العرض يحتاج آخر 4-6 مدخلات؛ السجل أوسع قليلاً ليبقى مفيداً). */
         const val MAX_ENTRIES = 50
         private const val PREFS_NAME = "last_opened_files"
         private const val KEY_ENTRIES = "entries"

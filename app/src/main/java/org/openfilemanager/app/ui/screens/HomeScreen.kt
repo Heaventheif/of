@@ -23,7 +23,6 @@ import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.MusicNote
-import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Storage
 import androidx.compose.material.icons.outlined.VideoLibrary
 import androidx.compose.material3.Card
@@ -36,7 +35,6 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
-// (تصحيح F13) اسم الحزمة الصحيح nestedscroll بحرف صغير: الحزمة nestedScroll لا وجود لها
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
@@ -47,14 +45,11 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import java.io.File
-import org.openfilemanager.app.MediaLibrary
 import org.openfilemanager.app.LibraryTab
 import org.openfilemanager.app.R
 import org.openfilemanager.app.appContainer
 import org.openfilemanager.app.ui.components.BorderedIcon
-import org.openfilemanager.app.ui.components.FileRow
 import org.openfilemanager.app.ui.theme.Dim
-import org.openfilemanager.app.ui.toFileItem
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -66,7 +61,7 @@ fun HomeScreen(
     bottomBar: @Composable () -> Unit
 ) {
     val ctx = LocalContext.current
-    // (F-15) بطاقة التخزين عبر طبقة التخزين الموحدة لا Environment مباشرة:
+    // بطاقة التخزين عبر طبقة التخزين الموحدة لا Environment مباشرة:
     // الجذر والتسمية يأتيان من الوحدة الفعلية (داخلي/قابل للإزالة/وضع محدود).
     val primary = remember { ctx.appContainer.storage.roots().firstOrNull() }
     val rootFile: File = primary?.path?.toFile() ?: Environment.getExternalStorageDirectory()

@@ -4,12 +4,7 @@ import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.Path
 
-/**
- * كشف صيغة الأرشيف: بصمة المحتوى أولاً ثم الامتداد، مع مساعدات
- * تسمية وجهة الاستخراج. مشترك بين [ArchiveExtractor] و[ArchiveInspector]
- * وطبقة التطبيق (ArchiveService) — عام عمداً لأن التطبيق يحتاج أسماء
- * وجهات الاستخراج بنفس القواعد.
- */
+/** كشف صيغة الأرشيف: بصمة المحتوى أولاً ثم الامتداد، مع مساعدات تسمية وجهة الاستخراج. */
 object ArchiveFormat {
     enum class Kind { ZIP, TAR, TAR_GZ, TAR_XZ, GZ, XZ }
 

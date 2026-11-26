@@ -50,7 +50,6 @@ import org.openfilemanager.app.ui.FileItem
 import org.openfilemanager.app.ui.theme.Dim
 import org.openfilemanager.core.FileKind
 
-/** (F23) أنواع الصور المصغّرة بدل Any: ملف قرص أو غلاف صوت أو أيقونة APK. */
 internal sealed interface ThumbModel {
     data class DiskFile(val file: File) : ThumbModel
     data class AudioArtwork(val path: String, val modified: Long) : ThumbModel

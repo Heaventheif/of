@@ -32,13 +32,7 @@ data class MediaItem(
     val idKey: String get() = "media:$id"
 }
 
-/**
- * المكتبة: استعلامات MediaStore بصفحة واحدة في المرة (QUERY_ARG_LIMIT/OFFSET فلا
- * تُحمّل كل الصفوف)، وتصنيف فيديو مخصص على جدول MediaStore.Video،
- * مع تحديث تلقائي عبر ContentObserver يُسجَّل ويُلغى في مكانه،
- * وMediaScannerConnection بعد عمليات التطبيق على المسارات المتأثرة فقط
- * (لا إعادة فهرسة شاملة).
- */
+/** المكتبة: استعلامات MediaStore بصفحة واحدة في المرة (QUERY_ARG_LIMIT/OFFSET فلا تُحمّل كل الصفوف)، وتصنيف فيديو مخصص على جدول MediaStore.Video، مع. */
 class MediaLibrary(private val context: Context) {
     companion object {
         const val PAGE_SIZE = 200
@@ -53,6 +47,26 @@ class MediaLibrary(private val context: Context) {
             MediaStore.Files.FileColumns.DATE_MODIFIED,
             MediaStore.MediaColumns.DATA
         )
+
+        /** تبويب المستندات كان يعرض كل ملف غير وسائط (‎.so ‎.jks ‎.css ‎.srt…)، فتظهر فيه محتويات المشاريع والأرشيفات المفكوكة. */
+        private const val MIME = MediaStore.Files.FileColumns.MIME_TYPE
+        private const val DATA = MediaStore.MediaColumns.DATA
+        private val DOC_EXTENSIONS = listOf(
+            "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "odt", "ods", "odp",
+            "rtf", "epub", "txt", "md", "csv"
+        )
+        private val DOCUMENTS_SELECTION: String = buildString {
+            append("(")
+            append("$MIME = 'application/pdf' OR $MIME = 'application/msword' OR ")
+            append("$MIME LIKE 'application/vnd.ms-excel%' OR $MIME LIKE 'application/vnd.ms-powerpoint%' OR ")
+            append("$MIME LIKE 'application/vnd.ms-word%' OR ")
+            append("$MIME LIKE 'application/vnd.openxmlformats-officedocument.%' OR ")
+            append("$MIME LIKE 'application/vnd.oasis.opendocument.%' OR ")
+            append("$MIME = 'application/rtf' OR $MIME = 'text/rtf' OR $MIME = 'application/epub+zip' OR ")
+            append("$MIME = 'text/plain' OR $MIME = 'text/csv' OR $MIME = 'text/markdown' OR $MIME = 'text/x-markdown'")
+            DOC_EXTENSIONS.forEach { append(" OR $DATA LIKE '%.$it'") }
+            append(") AND $DATA NOT LIKE '%/Android/data/%' AND $DATA NOT LIKE '%/Android/obb/%'")
+        }
 
         /** جدول الصور يُستعلم باسم مجلدها الحاوي (تجميع حسب المجلد). */
         private val PROJECTION_WITH_BUCKET = PROJECTION + arrayOf("bucket_display_name")
@@ -75,12 +89,7 @@ class MediaLibrary(private val context: Context) {
                 LibraryTab.IMAGES -> null
                 LibraryTab.VIDEOS -> null
                 LibraryTab.AUDIO -> null
-                LibraryTab.DOCUMENTS ->
-                    "${MediaStore.Files.FileColumns.MIME_TYPE} IS NOT NULL AND " +
-                        "${MediaStore.Files.FileColumns.MIME_TYPE} NOT LIKE 'image/%' AND " +
-                        "${MediaStore.Files.FileColumns.MIME_TYPE} NOT LIKE 'audio/%' AND " +
-                        "${MediaStore.Files.FileColumns.MIME_TYPE} NOT LIKE 'video/%' AND " +
-                        "${MediaStore.Files.FileColumns.MIME_TYPE} != '$APK_MIME'"
+                LibraryTab.DOCUMENTS -> DOCUMENTS_SELECTION
                 LibraryTab.APK -> "${MediaStore.Files.FileColumns.MIME_TYPE} = '$APK_MIME'"
                 LibraryTab.NEW ->
                     "${MediaStore.Files.FileColumns.MIME_TYPE} IS NOT NULL"

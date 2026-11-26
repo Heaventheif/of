@@ -2,24 +2,6 @@ package org.openfilemanager.core.pdf
 
 import java.util.concurrent.atomic.AtomicLong
 
-/**
- * (ميزانية مركزية) سقوف موارد فك ترميز مستند PDF واحد، تُطبَّق عبر كل
- * مسارات الفك في [PdfFile] و[PdfFont] والمعترض: لا ينتظر الفشل حتى
- * استهلاك الذاكرة بل يُرفض عند التجاوز برسالة واضحة.
- *
- * - [maxStreamBytes]: سقف ناتج stream واحد (لكل مرحلة مرشح، تراكمي عبر السلسلة).
- * - [maxTotalStreamBytes]: سقف مجموع البايتات المفكوكة للمستند كله — يمنع
- *   قنبلة موزعة على مداخل كثيرة (Do متكرر، محتويات صفحة متعددة) بدل قنبلة واحدة.
- * - [maxFilterChain]: طول سلسلة المرشحات (قنابل Flate المتداخلة).
- * - [maxXrefEntries]: عدد مداخل جداول/تدفقات xref (استهلاك ذاكرة الخريطة).
- * - [maxObjectsPerStream]: مدخل /N لتيار الكائنات قبل أي تخصيص حرصي.
- * - [maxCachedObjects]: سقف مخزن الكائنات المحلولة (LRU).
- * - [maxCmapEntries]: سقف مداخل خريطة ToUnicode (تفكيك endbfrange).
- * - [maxPageContentBytes]: مجموع محتوى صفحة واحدة (N مدخل /Contents).
- *
- * الخيط الآمن: العداد ذري؛ فك الترميز يجري تحت قفل المستند عملياً لكن
- * الذرية تجعل العقد صحيحاً حتى لو تعدّت المسارات.
- */
 internal class PdfResourceBudget(
     val maxStreamBytes: Int = DEFAULT_MAX_STREAM_BYTES,
     val maxTotalStreamBytes: Long = DEFAULT_MAX_TOTAL_STREAM_BYTES,
@@ -33,13 +15,7 @@ internal class PdfResourceBudget(
     private val chargedStreams = HashSet<Long>()
     private val totalStreamBytes = AtomicLong(0L)
 
-    /**
-     * يسجل بايتات فك stream **متميز** (موضعه وطوله) مرة واحدة في ميزانية
-     * المستند، ويُفشل عند تجاوز [maxTotalStreamBytes]. التمييز ضروري:
-     * إعادة طلب نص صفحة (بحث/تمرير) تعيد فك التيارات نفسها، فتأمين كل فك
-     * كان يُنهي قراءة مستندات كبيرة سليمة في منتصفها. الخلفية سقف أخير
-     * (2 ج.ب) فوق أي مستند نصي حقيقي وضمن أي هجوم موزّع.
-     */
+    /** يسجل بايتات فك stream **متميز** (موضعه وطوله) مرة واحدة في ميزانية المستند، ويُفشل عند تجاوز [maxTotalStreamBytes]. */
     fun chargeDecodedOnce(stream: PdfStream, decodedBytes: Int) {
         val key = stream.start.toLong() shl 32 or (stream.length.toLong() and 0xffffffffL)
         if (!chargedStreams.add(key)) return
@@ -58,11 +34,6 @@ internal class PdfResourceBudget(
         /** سقف ناتج stream واحد (64 MiB): كافٍ لأي مستند نصي حقيقي. */
         const val DEFAULT_MAX_STREAM_BYTES = 64 shl 20
 
-        /**
-         * ميزانية الفك الكلية للمستند (256 MiB): تقيّد العمل لا الذاكرة —
-         * الذروة تبقى محدودة بسقف المرحلة؛ هذا يمنع مليون عملية فك صغيرة
-         * تستهلك CPU إلى ما لا نهاية.
-         */
         const val DEFAULT_MAX_TOTAL_STREAM_BYTES = 256L shl 20
 
         /** أقصى طول سلسلة مرشحات: السلاسل الحقيقية 1-3، و8 حصن ضد التداخل. */

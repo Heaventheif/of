@@ -30,8 +30,8 @@ android {
         applicationId = "org.openfilemanager.app"
         minSdk = 30
         targetSdk = 36
-        versionCode = 24
-        versionName = "0.8.7"
+        versionCode = 25
+        versionName = "0.8.8"
         // (تحسين) موارد المكتبات بلغات التطبيق فقط: تُحذف ترجمات AndroidX والمواد
         // في عشرات اللغات غير المستعملة من الحزمة
     }

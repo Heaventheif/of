@@ -31,9 +31,6 @@ data class FloatRect(val left: Float, val top: Float, val right: Float, val bott
     }
 
     companion object {
-        fun ltrb(left: Float, top: Float, right: Float, bottom: Float) =
-            FloatRect(left, top, right, bottom)
-
         fun xywh(x: Float, y: Float, w: Float, h: Float) = FloatRect(x, y, x + w, y + h)
     }
 }
@@ -46,15 +43,6 @@ object CropMath {
 
     /** أصغر ضلع مسموح لمنطقة القصّ بوحدات بكسل الصورة. */
     const val MIN_SIZE = 16f
-
-    /**
-     * أقرب نسبة عرض:ارتفاع شائعة لنسبة معطاة، أو null إذا لم تكن شائعة.
-     * مفيد لعرض التسمية الصحيحة لمنطقة قصّ موجودة.
-     */
-    fun commonAspectOf(ratio: Float): String? {
-        val presets = listOf(1f to "1:1", 4f / 3f to "4:3", 3f / 4f to "3:4", 16f / 9f to "16:9", 9f / 16f to "9:16")
-        return presets.firstOrNull { abs(it.first - ratio) < 0.01f }?.second
-    }
 
     /**
      * أكبر مستطيل بنسبة aspect يتركّز داخل [rect]. إذا كانت المساحة لا تكفي

@@ -6,27 +6,8 @@ import java.nio.file.Files
 import java.nio.file.LinkOption
 import java.nio.file.Path
 import java.nio.file.Paths
-import java.nio.file.StandardCopyOption
 
-/**
- * سجل دائم للنسخ الاحتياطية التي تحتوي بيانات المستخدم عند استبدال مجلد
- * الوجهة أثناء استخراج أرشيف بسياسة REPLACE.
- *
- * المشكلة (0.8.1): مسار الاستبدال كان يحفظ الوجهة القديمة باسم
- * `.fm-replace-backup-<uuid>` في الذاكرة فقط (backupPath محلي في الخدمة)،
- * فإذا ماتت العملية بعد نقل المجلد الأصلي وقبل اكتمال الاستخراج كان
- * منظّف المؤقتات [OpRecovery] يحذف النسخة الاحتياطية مع بقية
- * `.fm-*` — بيانات المستخدم القديمة تُمحى ولا يُستخرج البديل.
- *
- * الحل: كل نسخة احتياطية تُسجَّل هنا **قبل** نقل المجلد الأصلي إليها
- * (سجل على القرص بنفس متانة OpJournal: كتابة إلى مؤقت ثم نقل ذري ثم
- * fsync للمجلد). التنظيف العام للمؤقتات لم يمسّ `.fm-replace-backup-*`
- * بعد الآن؛ [ReplaceBackupRecovery.reconcile] هو وحده يقرر مصير كل
- * نسخة احتياطية وفق حالة عملية الاستخراج في سجل العمليات.
- *
- * الصيغة: ملف `replace-<opId>.tsv` لكل عملية استبدال جارية؛ حذف الملف
- * يعني انتهاء أمر الاستبدال (نجاحاً بإزالة النسخة أو فشلاً باستعادتها).
- */
+/** سجل دائم للنسخ الاحتياطية التي تحتوي بيانات المستخدم عند استبدال مجلد الوجهة أثناء استخراج أرشيف بسياسة REPLACE. */
 class ReplaceBackupStore(private val dir: Path) {
 
     /** أمر استبدال مسجّل: الأصل [original] نُقل إلى [backup] بانتظار نتيجة الاستخراج. */
@@ -104,15 +85,7 @@ class ReplaceBackupStore(private val dir: Path) {
     }.getOrNull()
 }
 
-/**
- * تسوية أوامر الاستبدال المعلّقة عند الإقلاع (أو أي فحص استرداد لاحق):
- * لكل أمر في [ReplaceBackupStore] تُقرر النسخة الاحتياطية انطلاقاً من حالة
- * عملية الاستخراج المقابلة في [OpJournal] — السجل الدائم لا الذاكرة.
- *
- * القاعدة الحاكمة: بيانات المستخدم الأصلية لا تُحذف إلا إذا ثبت أن
- * الاستخراج البديل اكتمل ونُشر (عملية FINISHED والأصل موجود في مكانه).
- * في كل حالة أخرى تُستعاد النسخة أو تُحفظ — ولا تُحذف أبداً «احتياطاً».
- */
+/** تسوية أوامر الاستبدال المعلّقة عند الإقلاع. */
 object ReplaceBackupRecovery {
 
     /** نتيجة التسوية لكل الأوامر (للسجل وعرض المستخدم). */
@@ -174,19 +147,16 @@ object ReplaceBackupRecovery {
         if (!backupExists) {
             // النقل إلى النسخة الاحتياطية لم يحدث (سُجّل الأمر ثم ماتت العملية
             // قبل move)، أو حُسم الأمر في تشغيل سابق ولم يُحذف السجل.
-            if (!originalExists) errors += "${rec.opId}: الأصل والنسخة الاحتياطية كلاهما غائب"
+            if (!originalExists) errors += CoreOpCode.BOTH_SOURCE_AND_BACKUP_MISSING
             store.remove(rec.opId)
             return
         }
 
         when {
             op == null -> {
-                // لا سجل عملية. إن كانت الوجهة غائبة فالاستخراج لم ينشر بديلاً
-                // قط (النشر يسبق دائماً إنهاء السجل، والسجل يُنشأ قبل أي كتابة):
-                // إرجاع الأصل آمن. وإن كانت الوجهة موجودة فالحالة ملتبسة
-                // (سجل مفقود مع ناشر مجهول) — تُحفظ النسخة ولا تُحذف.
+                // لا سجل عملية. إن كانت الوجهة غائبة فالاستخراج لم ينشر بديلاً قط (النشر يسبق دائماً إنهاء السجل، والسجل يُنشأ قبل أي كتابة): إرجاع الأصل آمن.
                 if (originalExists) {
-                    keep(rec, kept, errors, "لا سجل عملية استخراج مطابق والوجهة موجودة")
+                    keep(rec, kept, errors, CoreOpCode.NO_EXTRACT_LOG)
                 } else {
                     AtomicIO.moveNoReplace(backup, original)
                     store.remove(rec.opId)
@@ -203,7 +173,7 @@ object ReplaceBackupRecovery {
                     store.remove(rec.opId)
                     removed += rec.opId
                 } else {
-                    keep(rec, kept, errors, "العملية منتهية والوجهة غائبة")
+                    keep(rec, kept, errors, CoreOpCode.FINISHED_DEST_MISSING)
                 }
             }
 
@@ -213,7 +183,7 @@ object ReplaceBackupRecovery {
                 if (originalExists) {
                     // وجهة موجودة مع عملية غير مكتملة: لا نكتب فوقها ولا
                     // نحذف النسخة — القرار للمستخدم ببيانات كاملة أمامه.
-                    keep(rec, kept, errors, "الوجهة موجودة والعملية غير مكتملة")
+                    keep(rec, kept, errors, CoreOpCode.DEST_EXISTS_INCOMPLETE)
                 } else {
                     AtomicIO.moveNoReplace(backup, original)
                     store.remove(rec.opId)
@@ -230,17 +200,10 @@ object ReplaceBackupRecovery {
         why: String
     ) {
         kept += rec.opId
-        errors += "${rec.opId}: $why — النسخة الاحتياطية محفوظة"
+        errors += CoreOpCode.BACKUP_PRESERVED
     }
 
-    /**
-     * النسخ الاحتياطية اليتيمة: ملفات `.fm-replace-backup-*` بلا أمر مسجّل
-     * (من نسخ أقدم أو سجل تالف). لا تُحذف — تُعاد للعرض على المستخدم فقط؛
-     * حذفها قراره لأنها بيانات أصيلة قد تكون الوحيدة الباقية.
-     *
-     * @param parents المجلدات المفحوصة (مجلدات وجهات العمليات المسجلة).
-     * @param knownBackups مسارات النسخ المشمولة بأوامر حية.
-     */
+    /** النسخ الاحتياطية اليتيمة: ملفات `.fm-replace-backup-*` بلا أمر مسجّل (من نسخ أقدم أو سجل تالف). */
     fun orphanReplaceBackups(
         parents: Set<Path>,
         knownBackups: Set<Path>,
